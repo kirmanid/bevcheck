@@ -38,25 +38,20 @@ go run ./cmd/deploy down
 
 
 
-XXXX
-====
+DESIGN
+======
 
+Vision-language-models were considered & rejected as an alternative to OCR, on the grounds that they'd be too slow & unreliable. Latency is of primary importance -- Bevcheck's OCR (Textract) resolves quickly enough such that results are returned well under a five-second time-budget.
 
+Consequently, the warning-format isn't machine-verified. Bolding the first two words of the warning, the minimum type size by container volume, then minimum characters-per-inch, "legibility", "contrasting background" -- these are out-of-scope, except insofar as Textract OCR enforces a requirement of a certain degree of legibility required to read the text in the first place. (See 27 CFR 16.22.) Similarly, field-of-vision & placement checks are out-of-scope as well.
 
+Bevcheck's architecture is centered around a monolithic web-server running upon a small AWS EC2 instance, written in the Go programming language. Given that the computationally-intensive OCR step is farmed out to AWS' managed Textract OCR service, horizontal scaling to multiple nodes is not only unnecessary, but will never be necessary (even in a world where the TTB suddenly sees the rate of applications increase by a thousand times). Furthermore, an AWS-Lambda-based version of Bevcheck would spend most of its runtime idly waiting for Textract to finish its OCR jobs, rather than managing multiple verification-checks in parallel.
 
+Bevcheck's role is inherently stateless, so no database is required. Batch jobs & one-off checks run through the same Bevcheck API, for simplicity's sake.
 
+AWS & Go: Bevcheck is written in Go & runs on AWS also in the interest of simplicity -- notably simplicity of deployment. Aside from the fact that Go is well-suited for memory-safe & performant web-servers, Go's tooling makes cross-compilation straightforward, so that one can compile Bevcheck's server-binary from any machine while targeting the ARM/Linux EC2 virtual-machine. AWS has a great deal of precedent regarding use by the Federal Government, and the fact that AWS' Textract runs on the same cloud as the Bevcheck server means that outbound requests to external ML endpoints aren't made, and thus will not be blocked by TTB's network.
 
-
-
-
-
-
-
-
-
-
-
-
+Textract OCR is deterministic, as is Bevcheck's fuzzy string logic (consisting of normalization, Levenshtein-distance thresholds, and regex-checks). Determinism (& reliability more-generally) are key virtues pertaining to all forms of evaluating regulatory compliance.
 
 
 
