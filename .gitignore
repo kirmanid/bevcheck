@@ -1,0 +1,13 @@
+# Treasury research source materials (downloaded TTB/eCFR snapshots: PDFs, HTML, XML)
+research/sources/
+
+# macOS Finder metadata
+.DS_Store
+
+# AWS credentials / secrets (never commit)
+awscreds.csv
+*.pem
+.env
+
+# build output
+bin/

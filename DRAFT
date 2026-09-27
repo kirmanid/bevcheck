@@ -1,0 +1,332 @@
+# Bevcheck
+
+A standalone prototype that automates part of a TTB (Alcohol and Tobacco Tax
+and Trade Bureau) Certificate of Label Approval (COLA) review. Given one or more
+photographs of an alcohol-beverage label plus the matching application data, it
+extracts the label text with OCR and verifies that the mandatory fields are
+present and consistent with the application and with 27 CFR (Parts 4, 5, 7, 16).
+
+The core deliverable is a **deterministic verification engine** -- no LLM, no
+generative model. For background and the full legal/design rationale, see
+[`prelim-research.txt`](prelim-research.txt).
+
+---
+
+## Overview
+
+- **What it checks** (per label): brand name, class/type designation, alcohol
+  content (ABV + proof cross-check), net contents, name & address (producer /
+  bottler / importer), country of origin (imports), the mandatory government
+  health warning (presence, wording, caps), and the conditional disclosures
+  (sulfites, aspartame, FD&C Yellow No. 5, cochineal/carmine, coloring,
+  neutral spirits, age, state of distillation, and malt low/non-alcoholic
+  designations).
+- **How it reports**: a three-way verdict per label -- `Approved`,
+  `Needs Correction`, or `Rejected` -- plus a per-criterion breakdown with the
+  extracted value and a short reason.
+- **Architecture**: one Go monolith (`cmd/Bevcheck` - `internal/server`) that
+  orchestrates AWS Textract for OCR and runs every verification criterion
+  concurrently. Single image = a batch of one; the same async job pipeline
+  serves both.
+
+---
+
+## Setup / run
+
+### Prerequisites
+
+- Go 1.26+ (`go.mod` targets `go 1.26.0`).
+- An AWS account (only needed if you want OCR to actually run; see below).
+
+### AWS credentials
+
+Everything talks to AWS through the AWS SDK v2 **default config chain**, so
+credentials are fed in the standard ways and never hard-coded:
+
+1. Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+   (plus `AWS_SESSION_TOKEN` if using temporary/STS credentials).
+2. The shared files `~/.aws/credentials` and `~/.aws/config` (including a
+   named profile selected via `AWS_PROFILE`).
+3. On an EC2 instance: the instance role (IMDS) -- this is how the *deployed*
+   server authenticates, no keys needed on the box.
+
+The region is read from `AWS_REGION` (default `us-east-1`).
+
+Two different permission sets are involved, one per context:
+
+- **Running the server** (`go run ./cmd/Bevcheck`): the only AWS call is
+  Textract, so the credentials need `textract:DetectDocumentText`. Point them
+  at whatever identity you normally use; for a quick local test, `AWS_ACCESS_KEY_ID`
+  / `AWS_SECRET_ACCESS_KEY` in the environment is enough.
+- **Deploying** (`go run ./cmd/deploy`): the credentials are your *control-plane*
+  identity, so they need the rights to create/delete EC2 and IAM resources
+  (see the Deploy section). That identity should also be able to create the
+  instance role and inline policy that *grant* `textract:DetectDocumentText` to
+  the deployed server.
+
+> The deploy helper and the server both read credentials exclusively through
+> the SDK default chain. There is no separate credentials file or wrapper
+> script; `awscreds.csv` (git-ignored) is left over from an earlier workflow and
+> is no longer read by anything.
+
+### Run locally
+
+```sh
+go run ./cmd/Bevcheck
+```
+
+Environment variables (both optional):
+
+| Var          | Default     | Purpose                            |
+| ------------ | ----------- | ---------------------------------- |
+| `PORT`       | `80`        | HTTP listen port                   |
+| `AWS_REGION` | `us-east-1` | AWS region for Textract calls      |
+
+Open `http://localhost:<PORT>/` for the embedded web UI, or drive the API
+directly (see below).
+
+### Tests
+
+```sh
+go test ./...
+```
+
+The unit tests do **not** call AWS: OCR is bypassed by feeding fixture text
+straight into the criteria. The end-to-end fixture suite
+(`internal/server/testdata_test.go`) re-derives each `testdata/` case's expected
+verdict from the same `internal/fixtures.Cases()` source used to generate it, so
+the committed images/applications cannot drift from the logic.
+
+### Generating test fixtures
+
+```sh
+go run ./cmd/genfixtures   # regenerate testdata/*/label.png + application.json
+go run ./cmd/genlabel ...  # render a single synthetic label (flags: see cmd/genlabel/main.go)
+```
+
+Labels are rendered with a built-in bitmap font (pure Go, no AI, no external
+fonts) -- deterministic, but not representative of real photographed labels.
+
+### Deploy to AWS (single EC2 instance)
+
+```sh
+go run ./cmd/deploy deploy
+```
+
+Subcommands: `build` (cross-compile only), `deploy` (provision IAM/EC2, upload,
+start, health-check), `down` (tear down instance + SG/keypair/profile/role).
+The default action is `deploy`.
+
+**Credentials:** the deploy command is a control-plane tool, so its credentials
+(via the SDK default chain -- see above) need to create/delete IAM and EC2
+resources: roles, instance profiles, key pairs, security groups, and EC2
+instances, plus read the AMI from SSM (`ssm:GetParameter`). Concretely, that
+means `iam:*` (or at least the `Get/Create/DeleteRole`,
+`Put/DeleteRolePolicy`, `Add/RemoveRoleFromInstanceProfile`, and
+`Create/DeleteInstanceProfile` actions it uses), `ec2:*` (describe/create/
+terminate instances, security groups, key pairs), and `ssm:GetParameter`.
+During `deploy` it also creates an EC2 instance role with a single inline policy
+granting `textract:DetectDocumentText`, and attaches it to the instance -- so the
+**deployed** server authenticates via IMDS and needs no long-lived keys on the
+box.
+
+Configurable via environment variables: `INSTANCE_TYPE` (default `t4g.small`),
+`ARCH` (`arm64`), `AWS_REGION` (`us-east-1`), `NAME` (`Bevcheck`), `PORT` (`80`),
+
+`KEY_NAME`, `ROLE_NAME`, `PROFILE_NAME`, `SG_NAME`.
+
+The deploy helper installs the binary as a systemd service, waits for the
+instance to come up, and health-checks `/healthz` before printing the public
+URL.
+
+---
+
+## HTTP API
+
+| Method | Path             | Purpose                                                    |
+| ------ | ---------------- | ---------------------------------------------------------- |
+| GET    | `/`              | Embedded web UI                                            |
+| GET    | `/healthz`       | Liveness (`{"status":"ok"}`)                               |
+| POST   | `/v1/ocr`        | Raw image bytes in body - raw Textract OCR (synchronous)   |
+| POST   | `/v1/verify`     | Multipart: `image` + `application` (or Nx`image` + `applications[]`) - `{job_id}` |
+| POST   | `/v1/batch`      | JSONL body (one flat app + `image_url` per line) - `{job_id}` |
+| GET    | `/v1/jobs/{id}`  | Poll a job; returns per-item criteria + overall verdict    |
+
+`/v1/verify` and `/v1/batch` are asynchronous: they return a `job_id`, and the
+client polls `/v1/jobs/{id}` until `status == "done"`.
+
+### Application schema
+
+`internal/model.Application` mirrors the label-matchable fields of TTB Form
+5100.31, flattened (no nested objects):
+
+```jsonc
+{
+  "product_type":       "distilled_spirits",   // wine | distilled_spirits | malt_beverages (required)
+  "source":             "domestic",            // domestic | imported
+  "brand_name":         "OLD TOM DISTILLERY",
+  "applicant_name":     "Old Tom Distillery Co.",
+  "applicant_address":  "Bardstown, KY",
+  "class_type":         "Kentucky Straight Bourbon Whiskey",
+  "alcohol_content":    "45%",
+  "net_contents":       "750 mL",
+  "country_of_origin":  "Scotland",
+  "contains_neutral_spirits": false,
+  "colored":                 false,
+  "age_statement":           "",
+  "state_of_distillation":   "",
+  "contains_fdc_yellow5":    false,
+  "contains_carmine":        false,
+  "contains_sulfites":       false,
+  "contains_aspartame":      false
+}
+```
+
+Empty `class_type` / `alcohol_content` / `net_contents` / `country_of_origin`
+mean "not asserted" (these are label-derived fields; see Assumptions below).
+The boolean disclosure flags assert that the product *contains/uses* the
+substance, in which case the label must carry the mandated statement.
+
+---
+
+## Methods
+
+The verification engine lives in `internal/server/verify.go` and is a
+**conjunction of independent Boolean criteria** (research.txt SS7.6.9). Each
+criterion is a pure function `(context) -> (status, reason)`:
+
+- **OCR** (`internal/server/ocr.go`): AWS Textract `DetectDocumentText`
+  (raw text, line-level confidence + bounding boxes), read in top-to-bottom
+  order. Results are memoized by the SHA-256 of the image bytes in an
+  in-memory LRU cache (`internal/server/ocr_cache.go`).
+- **Normalization** (`verify.go`): three tiers, all *mechanical* (no model):
+  - `collapseWS` -- collapse whitespace (preserve case/punctuation);
+  - `normalizeWording` -- lowercase + collapse whitespace (warning wording);
+  - `normalizeFuzzy` -- lowercase + collapse whitespace + strip punctuation
+    (brand name, name/address, class/type, etc.).
+  Phrase matching is word-boundary-aware so `"TOM"` never matches `"AUTOMATIC"`.
+- **Verdict folding**: any `fail` - `Rejected`; else any `needs_correction` -
+  `Needs Correction`; else `Approved`. A criterion can also return the
+  non-blocking `human_confirm` flag (it never changes the verdict).
+- **Concurrency**: criteria are independent given the OCR text, so they run in
+  parallel goroutines after the single serial OCR step.
+- **Robustness**: each criterion is wrapped in a `recover()`, so a panic in one
+  check degrades to `needs_correction` instead of crashing the process.
+
+### Fuzzy string matching (normalization + edit distance)
+
+"Fuzzy" here is strictly **mechanical** -- normalization and edit distance, never
+model-based similarity. It exists to separate *formatting noise* (which the
+regulation tolerates) from *substantive deviation* (which it does not).
+
+**Three normalization tiers** (`verify.go`), each building on the last:
+
+| Function | Transformation | Used for |
+| --- | --- | --- |
+| `collapseWS` | `\s+` - single space (case & punctuation preserved) | feeding the criteria |
+| `normalizeWording` | lowercase + `collapseWS` (punctuation & word order kept) | warning-wording compare |
+| `normalizeFuzzy` | lowercase + `collapseWS` + strip punctuation (`[^\pL\pN]+` - space) | brand, name/address, class/type, age, etc. |
+
+`normalizeFuzzy` is deliberately the loosest and is reserved for fields where
+the CFR allows formatting variation -- so `"STONE'S THROW"`, `"Stone's Throw"`,
+and `"stones throw"` all collapse to the same string. It does **not** touch word
+order or spellings; it only removes case, whitespace, and punctuation
+differences.
+
+**Phrase matching is word-boundary-aware** (`containsPhrase`): the needle and
+haystack are compared with surrounding spaces (`" "+norm+" "`), so a short
+class/type like `"gin"` or a brand like `"TOM"` never matches inside a longer
+word (`"engine"`, `"automatic"`). This keeps substring checks on short tokens
+safe.
+
+**Levenshtein edit distance** (`levenshtein`) is the classic DP
+insert/delete/substitute metric (cost 1 each), implemented with a two-row
+rolling buffer over runes (Unicode-aware, O(n) memory). It is used only where
+exactness matters but OCR is allowed to misread a character: the government
+warning.
+
+**Warning-wording comparison** (`checkWarningWording`) is the one place the two
+philosophies combine:
+
+1. First try an **exact** substring match of the verbatim `regs.GovernmentWarning`
+   after `normalizeWording` -- whitespace/case-insensitive but otherwise
+   word-for-word, punctuation included.
+2. If that fails, `containsNear(haystack, needle, 3)` slides a window of
+   `len(needle) +- 3` across the OCR text and reports whether any window is
+   within **3 edits**. A hit here is `needs_correction` (surfaced for human
+   review), *not* a pass.
+3. Anything farther than 3 edits is `fail`.
+
+The tight edit-distance allowance exists only to absorb OCR character errors
+(dropped/misread glyphs). It is small enough that a real wording change -- a
+dropped `(2)`, a reordered token, "Government Warning" instead of
+"GOVERNMENT WARNING" -- never silently passes; those land in the
+`needs_correction`/`fail` bucket and are shown to the agent with a reason.
+
+### The 20 criteria
+
+| Criterion | What it checks |
+| --- | --- |
+| `ocr_confidence` | min line confidence >= 85% (else needs correction) |
+| `brand_name` | normalized fuzzy phrase match vs. application |
+| `class_type` | presence of a recognized class/type (controlled vocabulary); mismatch flagged |
+| `alcohol_content` | parse ABV from legal formats, compare vs. expected within tolerance, cross-check proof = 2xABV |
+| `net_contents` | parse volume to canonical mL, compare vs. expected (+-1%), standard-of-fill check |
+| `name_address` | function phrase ("bottled by" / "imported by") + applicant name + address |
+| `country_of_origin` | imports only: normalized compare vs. asserted origin |
+| `government_warning_present` | "government warning" present |
+| `government_warning_wording` | verbatim match vs. `regs.GovernmentWarning`; <=3 edit-distance - needs correction |
+| `government_warning_prefix_caps` | "GOVERNMENT WARNING" prefix is uppercase |
+| `government_warning_format` | bold/type-size/contrast -- `human_confirm` flag only |
+| `sulfite_disclosure` | "contains sulfites" present/negation-aware |
+| `aspartame_disclosure` | all-caps `PHENYLKETONURICS: CONTAINS PHENYLALANINE` |
+| `fdc_yellow5_disclosure` | FD&C Yellow No. 5 disclosure (incl. `#5` variant) |
+| `carmine_disclosure` | carmine/cochineal disclosure, negation-aware |
+| `age_statement` | asserted age appears on label (word-boundary-aware) |
+| `coloring_disclosure` | coloring/treatment disclosure (excludes bare "color" noun) |
+| `neutral_spirits_disclosure` | neutral-spirits disclosure present |
+| `state_of_distillation` | asserted state appears on label |
+| `malt_alcohol_designation` | malt "non-alcoholic" (<0.5%) / "low alcohol" (<2.5%) thresholds |
+
+Regulatory constants (the verbatim warning, aspartame statement, ABV
+tolerances, class/type vocabularies) live in `internal/regs/`.
+
+---
+
+## Assumptions & limitations
+
+These are the implicit contracts the implementation relies on. Worth surfacing
+explicitly in a review:
+
+1. **Deterministic only -- no Bedrock LLM.** Every criterion is normalization,
+   regex, or edit-distance. A generative criterion was considered and dropped
+   (see research.txt SS5.5); class/type is resolved against a *finite* controlled
+   vocabulary, and residual ambiguity degrades to `Needs Correction`.
+2. **Warning format is not machine-verified.** Bold on the first two words,
+   minimum type size by container volume, characters-per-inch, legibility, and
+   contrasting background (27 CFR 16.22) are only surfaced as a non-blocking
+   `human_confirm` flag -- the engine never claims it verified them. Pixel-level
+   bold/size detection is unreliable without a scale reference (research.txt
+   SS8.4).
+3. **Field-of-vision / placement checks are out of scope.** Only presence and
+   legibility are checked, not "same field of vision" geometry, which needs
+   multiple images per container (research.txt SS8.9).
+4. **Class/type vocabularies are a representative subset** of 27 CFR subpart I /
+   subpart C (research.txt SS2.4.2). Matching is phrase/boundary-aware; an
+   unlisted designation degrades to `Needs Correction`.
+5. **Fuzzy vs. exact matching boundary** (research.txt SS8.2): brand/name/
+   address/class-type are case/punctuation/whitespace-tolerant; the government
+   warning is verbatim (whitespace-normalized) with a tight <=3 edit-distance
+   allowance for OCR noise only.
+6. **ABV/net-contents are "label-derived", not form fields.** The real 5100.31
+   does not carry them; this prototype keeps them in the flat application object
+   as optional *expected* values and otherwise derives them from the label and
+   validates against the CFR (research.txt SS4.7).
+7. **Disclosure scope** (research.txt SS8.11): the engine checks *presence/format*
+   of a disclosure when the application asserts the substance, and flags the
+   reverse (label discloses, form does not). It does not independently determine
+   whether a formula *requires* a disclosure.
+8. **OCR & latency**: Textract is on the critical path; the ~5 s budget is a
+   design target, not a measured guarantee. Textract sync TPS/quotas are the
+   binding constraint and must be measured in a real deployment (research.txt
+   SS6.7/8.6).

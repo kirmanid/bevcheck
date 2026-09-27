@@ -1,0 +1,1608 @@
+TABLE OF CONTENTS
+================================================================================
+
+1. OVERVIEW AND SCOPE
+  1.1 PURPOSE
+  1.2 METHOD
+  1.3 PROBLEM IN ONE PARAGRAPH
+  1.4 KEY CONSTRAINTS FROM STAKEHOLDER INTERVIEWS
+2. LEGAL FRAMEWORK AND REGULATIONS
+  2.1 LEGAL FRAMEWORK AND AGENCY
+  2.2 WHAT THE REVIEW ACTUALLY CHECKS
+  2.3 MANDATORY LABEL FIELDS, BY BEVERAGE TYPE
+    2.3.1 DISTILLED SPIRITS
+    2.3.2 WINE
+    2.3.3 MALT BEVERAGES
+  2.4 FIELD-BY-FIELD RULES
+    2.4.1 BRAND NAME
+    2.4.2 CLASS / TYPE DESIGNATION
+    2.4.3 ALCOHOL CONTENT
+    2.4.4 NET CONTENTS
+    2.4.5 NAME AND ADDRESS
+    2.4.6 COUNTRY OF ORIGIN
+  2.5 FORMAT AND PLACEMENT RULES
+    2.5.1 Legibility and contrast
+    2.5.2 Type size
+    2.5.3 "Separate and apart"
+    2.5.4 Language
+    2.5.5 Placement / field of vision
+    2.5.6 Firmly affixed
+  2.6 REGULATORY SCOPE BOUNDARIES
+  2.7 WHAT "VERIFYING A LABEL" MEANS, REDUCED TO RULES
+3. GOVERNMENT HEALTH WARNING STATEMENT - EXACT REQUIREMENTS
+  3.1 THE EXACT REQUIRED TEXT
+  3.2 FORMAT REQUIREMENTS
+  3.3 WHY THIS IS THE HARD CASE FOR THE TOOL
+  3.4 VERIFICATION SEMANTIC SUMMARY
+  3.5 IMPLEMENTATION STATUS NOTE
+4. THE EXISTING COLA SYSTEM AND DATA MODEL
+  4.1 HOW THE SYSTEM WORKS
+  4.2 THE FORM'S FIELD LIST
+  4.3 THE E-APPLICATION STATUS VOCABULARY
+  4.4 THE LABEL-IMAGE FILE CONTRACT
+  4.5 THE INTEROPERABILITY CEILING
+  4.6 RECOMMENDED JSON SCHEMA
+  4.7 THE SEMANTIC GAP
+  4.8 VERDICT VOCABULARY - REUSE COLA'S STATUSES
+5. IMAGE / TEXT EXTRACTION - PROCESSING MODEL OPTIONS
+  5.1 OPTION CLASSES
+    5.1.1 MANAGED CLOUD OCR
+    5.1.2 MANAGED MULTIMODAL LLM
+    5.1.3 SELF-HOSTED OPEN SOURCE
+  5.2 THE ARCHITECTURAL INSIGHT
+  5.3 COMPARISON TABLE
+  5.4 DECISION
+  5.5 BEDROCK LLM CRITERIA - REJECTED FOR THE PROTOTYPE
+6. DEPLOYMENT AND ARCHITECTURE
+  6.1 WHY SINGLE-CLOUD AWS ADDRESSES THE FIREWALL PROBLEM
+  6.2 COMPUTE OPTIONS
+  6.3 THE TWO PROCESSING SHAPES: SYNC (5s) AND ASYNC
+    6.3.1 SYNC PATH
+    6.3.2 ASYNC PATH
+  6.4 DATA FLOW
+  6.5 SECURITY / FEDERAL NOTES
+  6.6 SCALING NOTE
+  6.7 WORST-CASE LOAD ANALYSIS AND THE MONOLITH DECISION
+    6.7.1 WORST-CASE LOAD MODEL
+    6.7.2 WHY THE MONOLITH IS NOT THE BOTTLENECK
+    6.7.3 WHY NOT LAMBDA
+    6.7.4 SCOPE AND LIMITS OF THIS DECISION
+7. SYSTEM SPECIFICATION
+  7.1 PURPOSE
+  7.2 SCOPE AND NON-GOALS
+  7.3 USERS
+  7.4 INPUTS
+    7.4.1 Label images
+    7.4.2 Application data
+    7.4.3 IMPORTANT
+  7.5 PROCESSING PIPELINE
+  7.6 VERIFICATION RULES
+    7.6.1 BRAND NAME
+    7.6.2 CLASS/TYPE DESIGNATION
+    7.6.3 ALCOHOL CONTENT
+    7.6.4 NET CONTENTS
+    7.6.5 NAME AND ADDRESS
+    7.6.6 COUNTRY OF ORIGIN
+    7.6.7 GOVERNMENT WARNING
+    7.6.8 PRESENCE/FORMAT
+    7.6.9 VERIFICATION AS A CONJUNCTION OF PARALLEL BOOLEAN CRITERIA
+  7.7 OUTPUT / VERDICT SEMANTICS
+  7.8 NON-FUNCTIONAL REQUIREMENTS
+    7.8.1 LATENCY
+    7.8.2 BATCH
+    7.8.3 USABILITY
+    7.8.4 CORRECTNESS
+    7.8.5 SECURITY
+    7.8.6 ROBUSTNESS
+  7.9 ACCEPTANCE CRITERIA
+8. UNCERTAINTIES, OPEN QUESTIONS, AND RISKS
+  8.1 BEVERAGE-TYPE SCOPE
+  8.2 EXACT VS FUZZY MATCHING BOUNDARIES
+  8.3 WARNING STATEMENT - PUNCTUATION AND LINE BREAKS
+  8.4 FORMAT CHECKS (BOLD / TYPE SIZE / CONTRAST) RELIABILITY
+  8.5 COUNTRY OF ORIGIN DEPTH
+  8.6 OCR/VISION MODEL CHOICE AND THE 5-SECOND BUDGET
+  8.7 APPLICATION-DATA SCHEMA
+  8.8 IMAGE SOURCES AND RIGHTS / TEST DATA
+  8.9 "FIELD OF VISION" AND PLACEMENT CHECKS
+  8.10 PROOF VS ABV CROSS-CHECK EDGE CASES
+  8.11 ASPARTAME / INGREDIENT DISCLOSURES
+  8.12 FEDERAL COMPLIANCE GAP
+  8.13 DATE / VERSIONING OF REGULATIONS
+  8.14 ASSUMPTION: BACKEND LANGUAGE AND CLOUD
+  8.15 COLA INTEROPERABILITY LIMIT
+  8.16 PAPER-FORM-AS-IMAGE
+  8.17 BEDROCK LLM - NOT REQUIRED
+
+================================================================================
+1. OVERVIEW AND SCOPE
+================================================================================
+
+1.1 PURPOSE
+--------------------------------------------------------------------------------
+Background-research-only output. No implementation. The goal is to scope the
+problem and produce an English specification of what the system ought to do.
+Findings are written here as ASCII text, with uncertainties noted inline and
+consolidated in section 8.
+
+1.2 METHOD
+--------------------------------------------------------------------------------
+  1. Read the full assignment (treasury-takehome.md).
+  2. Fetched TTB public pages with curl (ttb.gov): labeling home, labeling
+     resources, health warning statements, Beverage Alcohol Manual (BAM)
+     pages, anatomy-of-a-label pages, COLA guidance, COLAs Online customer
+     page, and COLAs Online FAQs.
+  3. Fetched the authoritative regulatory text from the eCFR API (ecfr.gov) as
+     XML, for 27 CFR:
+        Part 16 - Alcoholic Beverage Health Warning Statement
+        Part 5  - Labeling and Advertising of Distilled Spirits
+        Part 4  - Labeling and Advertising of Wine
+        Part 7  - Labeling and Advertising of Malt Beverages
+  4. Fetched TTB Form 5100.31 (the COLA application) and extracted its field
+     list; extracted COLAs Online file-format and status rules from the FAQ.
+  5. Extracted plain text from the XML and quoted the operative sections.
+
+A note on the "alcohol-specific federal website": the assignment's hint refers
+to the Alcohol and Tobacco Tax and Trade Bureau (TTB), a bureau of the U.S.
+Department of the Treasury, which administers the Federal Alcohol Administration
+(FAA) Act and the Alcoholic Beverage Labeling Act. Its site is ttb.gov. The
+authoritative regulatory text lives on the eCFR (ecfr.gov), which is where the
+precise field-by-field rules are found. (There is no separate "Bureau of
+Tobacco and Beverages"; TTB is the correct agency.)
+
+1.3 PROBLEM IN ONE PARAGRAPH
+--------------------------------------------------------------------------------
+TTB's Compliance Division reviews roughly 150,000 certificate-of-label-approval
+(COLA) applications per year with 47 agents, largely by eye. Each review means
+checking that the text on a photographed label (brand name, class/type, alcohol
+content, net contents, name and address, country of origin, and the mandatory
+government warning) matches the text stated in the application and satisfies
+the regulations. Much of this is routine data-entry verification. The proposed
+tool should automate that matching: accept one or many label images plus
+application data, extract the label text, compare it against the application
+and the regulations, and flag matches/mismatches.
+
+1.4 KEY CONSTRAINTS FROM STAKEHOLDER INTERVIEWS
+--------------------------------------------------------------------------------
+  - Throughput: ~150,000 applications/year, 47 agents, 5-10 min per simple
+    application.
+  - Latency (hard): results in about 5 seconds per label. A prior vendor pilot
+    at 30-40 seconds was abandoned. Quote: "If we can't get results back in
+    about 5 seconds, nobody's going to use it."
+  - Usability (hard): "my mother could figure out" - a 73-year-old benchmark.
+    Clean, obvious, no hunting for buttons. Half the team is over 50.
+  - Batch: peak-season importers dump 200-300 applications at once; today they
+    are processed one at a time. Batch upload is a high-value feature.
+  - Environment: on Azure (migrated 2019); COLA system is .NET. This is a
+    STANDALONE prototype, not COLA integration. Prototype must not store
+    sensitive data (PII/document-retention rules deferred).
+  - Network: TTB's network blocks outbound traffic to many domains; the prior
+    vendor pilot broke because the firewall blocked its ML endpoints. This is
+    decisive for architecture (see section 6).
+  - Judgment nuance: an agent noted "STONE'S THROW" vs "Stone's Throw" is
+    "technically a mismatch" but "obviously the same thing" - matching must be
+    case/format tolerant where the regulation allows, exact where it does not.
+  - Exactness: the government warning is word-for-word mandatory; all-caps and
+    bold "GOVERNMENT WARNING:" required; "Government Warning" in title case was
+    rejected. See section 3.
+
+================================================================================
+2. LEGAL FRAMEWORK AND REGULATIONS
+================================================================================
+
+2.1 LEGAL FRAMEWORK AND AGENCY
+--------------------------------------------------------------------------------
+Three layers of law govern alcohol beverage labels:
+
+  (a) The Federal Alcohol Administration (FAA) Act (27 U.S.C. 201 et seq.).
+      Requires TTB to approve all alcohol labels and advertising to (1) prevent
+      consumer deception, (2) provide adequate product information, and
+      (3) prevent false or misleading statements. This is the source of the
+      COLA (Certificate of Label Approval) requirement.
+
+  (b) The Alcoholic Beverage Labeling Act of 1988 (ABLA). Requires a specific
+      government health warning statement on ALL alcohol beverage containers
+      (0.5% ABV and above). Implemented at 27 CFR Part 16.
+
+  (c) The labeling regulations per commodity:
+        27 CFR Part 5  - Distilled Spirits
+        27 CFR Part 4  - Wine
+        27 CFR Part 7  - Malt Beverages (beer and similar)
+      Each part specifies the mandatory label fields, format rulews, and
+      standards of identity (class/type designations).
+
+Agency: the Alcohol and Tobacco Tax and Trade Bureau (TTB), U.S. Department of
+the Treasury. Label applications are processed via the COLAs Online system and
+approved on TTB Form 5100.31.
+
+Numbering note: Parts 5 and 7 were modernized by T.D. TTB-158 / T.D. TTB-176
+(effective 2022) and now use renumbered sections (e.g. 5.63, 7.63). Part 4
+(wine) still uses legacy numbering (e.g. 4.32). This document uses the CURRENT
+numbers as published.
+
+2.2 WHAT THE REVIEW ACTUALLY CHECKS (THE MATCHING PROBLEM)
+--------------------------------------------------------------------------------w
+A COLA review compares two things:
+
+  (1) The APPLICATION data - the values the producer asserts on Form 5100.31.
+      Note (important, see section 4): the form carries brand name, fanciful
+      name, product type, source, formula, varietals, appellation, and
+      applicant name/address - but NOT alcohol content, net contents,
+      class/type, or the warning.
+
+  (2) The LABEL ARTWORK - a photograph/render of the physical label.
+
+The agent confirms the label's printed values match the application's asserted
+values (brand name, name/address), and that the label satisfies the format
+rules (legibility, placement, exact warning text, legal ABV format, etc.). The
+tool automates exactly this comparison. The regulations below define BOTH the
+set of fields that must exist and the format constraints on each.
+
+2.3 MANDATORY LABEL FIELDS, BY BEVERAGE TYPE
+--------------------------------------------------------------------------------
+
+2.3.1 DISTILLED SPIRITS (27 CFR Part 5)
+Mandatory information is set out in 27 CFR 5.63, split by placement:
+
+  Same field of vision (single side; for a cylinder, 40% of circumference;
+  viewable without turning the container):
+    > 5.63(a)(1) Brand name (5.64)
+    > 5.63(a)(2) Class, type, or other designation (subpart I)
+    > 5.63(a)(3) Alcohol content (5.65)
+
+  Anywhere on the container:
+    > 5.63(b)(1) Name and address of bottler/distiller (5.66) or importer
+    >            (5.67 or 5.68), as applicable
+    > 5.63(b)(2) Net contents (5.70)
+
+  Conditional disclosures (only when the condition applies):
+    > 5.63(c)(1) Neutral spirits: % and commodity source
+    > 5.63(c)(2) Coloring/treatment with wood
+    > 5.63(c)(3) Age statement (when required or used)
+    > 5.63(c)(4) State of distillation (certain U.S. whiskies)
+    > 5.63(c)(5) FD&C Yellow No. 5
+    > 5.63(c)(6) Cochineal extract or carmine
+    > 5.63(c)(7) Sulfites (>= 10 ppm): "Contains sulfites" etc.
+    > 5.63(c)(8) Aspartame: "PHENYLKETONURICS: CONTAINS PHENYLALANINE."
+    >            (all caps, separate and apart)
+
+  Plus the health warning statement (27 CFR Part 16), mandatory on all alcohol
+  beverages >= 0.5% ABV. See section 3.
+
+2.3.2 WINE (27 CFR Part 4)
+Mandatory information is set out in 27 CFR 4.32:
+
+  Brand label (front):
+    > 4.32(a)(1) Brand name (4.33)
+    > 4.32(a)(2) Class, type, or other designation (4.34)
+    > 4.32(a)(4) On U.S./foreign blends referencing foreign wine: exact % by
+    >            volume of foreign wine
+
+  Any label on the container:
+    > 4.32(b)(1) Name and address (4.35)
+    > 4.32(b)(2) Net contents (4.37)
+    > 4.32(b)(3) Alcohol content (4.36)
+
+  Conditional disclosures:
+    > 4.32(c)   FD&C Yellow No. 5
+    > 4.32(d)   Cochineal extract / carmine
+    > 4.32(e)   Sulfites (>= 10 ppm)
+
+  Wine EXCEPTION on alcohol content: 4.36(a) - alcohol content MUST be stated
+  only for wines over 14% ABV. For wine at 14% or less, it MAY be omitted if
+  the "table" or "light" designation appears. Tolerance: 1.0% (over 14%) or
+  1.5% (14% or less), or a range statement (max 2%/3% spread).
+
+2.3.3 MALT BEVERAGES (27 CFR Part 7)
+Mandatory information is set out in 27 CFR 7.63:
+
+    > 7.63(a)(1) Brand name (7.64)
+    > 7.63(a)(2) Class, type, or other designation (subpart I)
+    > 7.63(a)(3) Alcohol content (7.65) - MANDATORY ONLY when the beverage
+    >            contains alcohol from added nonbeverage flavors/ingredients
+    >            (other than hops extract). Otherwise alcohol content is
+    >            OPTIONAL unless required by state law.
+    > 7.63(a)(4) Name and address of bottler or importer (7.66/7.67/7.68)
+    > 7.63(a)(5) Net contents (7.70)
+
+  Conditional disclosures (7.63(b)): FD&C Yellow No. 5; cochineal/carmine;
+  sulfites (>= 10 ppm); aspartame (all caps).
+
+  Plus the health warning statement (Part 16).
+
+2.4 FIELD-BY-FIELD RULES (WHAT "MATCHES" MEANS PER FIELD)
+--------------------------------------------------------------------------------
+
+2.4.1 BRAND NAME
+  - Must appear on the label. If no brand name, the producer/importer name in
+    the name-and-address statement is treated as the brand name (5.64(a),
+    4.33(a), 7.64(a)).
+  - May not be misleading as to age, origin, identity, or other characteristics
+    (5.64(b), 4.33(b), 7.64(b)); a misleading name may be qualified with
+    "brand".
+  - Brand name is the ONE mandatory field NOT required to be in English
+    (5.55(a)).
+  - Implication for matching: brand-name comparison should be case- and
+    punctuation-tolerant (the "STONE'S THROW" vs "Stone's Throw" case from the
+    interviews). This is a fuzzy-normalized comparison, not byte equality.
+
+2.4.2 CLASS / TYPE DESIGNATION (standards of identity)
+  - Must conform to the standards of identity in subpart I of each part
+    (5.63(a)(2); 7.63(a)(2); 4.34 for wine).
+  - Examples of class/type: "Kentucky Straight Bourbon Whiskey" (the sample
+    label in the assignment), "vodka", "gin", "champagne"/"sparkling wine",
+    varietal wine designations, etc.
+  - Wine 4.34: class stated in conformity with subpart C unless "table"/"light"
+    or "dessert"; varietal/type/appellation designations may substitute in
+    defined cases; appellation of origin must appear with the class/type in
+    certain situations.
+  - Implication: verification against a controlled vocabulary of legal
+    designations is possible but large; for a prototype, extract the class/type
+    string and compare (normalized) to the application value, with a vocabulary
+    check as a stretch goal.
+
+2.4.3 ALCOHOL CONTENT (formats and tolerances)
+  Distilled spirits (5.65): MUST be stated as % alcohol by volume.
+    Allowed formats:
+      "Alcohol ___ percent by volume"
+      "___ percent alcohol by volume"
+      "Alcohol by volume ___ percent"
+    Allowed abbreviations: "alc" for alcohol; "%" for percent; "/" for "by";
+    "vol" for volume. Examples that comply:
+      "40% alc/vol"; "Alc. 40 percent by vol."; "Alc 40% by vol";
+      "40% Alcohol by Volume."
+    Proof may additionally appear in the same field of vision. Proof = 2x ABV.
+    Tolerance: +/- 0.3 percentage points (5.65(c)).
+
+  Wine (4.36): "Alcohol __ % by volume" or a range; abbreviations alc./vol.
+    Tolerance 1.0% (>14%) or 1.5% (<=14%). Content optional <=14% with
+    table/light designation.
+
+  Malt beverages (7.65): to nearest 0.1% ABV (>=0.5%); tolerance +/- 0.3 pp;
+    special "low alcohol" (<2.5%), "non-alcoholic" (<0.5%, with adjacent
+    statement), "alcohol free" (0.0%) rules.
+
+  The assignment's sample field "45% Alc./Vol. (90 Proof)" is a valid distilled
+  spirits statement (45% ABV + 90 proof).
+
+  Implication: the tool must recognize multiple valid formats and normalize
+  them to a canonical ABV number, then apply the tolerance. Proof should be
+  cross-checked (proof = 2 x ABV).
+
+2.4.4 NET CONTENTS
+  Distilled spirits (5.70): volume as a net contents statement; "liter"/
+  "litre"/"L"; "milliliters"/"ml."/"mL."/"ML."; U.S. customary and metric
+  equivalents may appear in the same field of vision. Net contents may be
+  blown/embossed/molded into glass.
+
+  Wine (4.37): metric standards of fill per 4.72 (750 mL, 1.5 L, etc.);
+  U.S. equivalents optional.
+
+  Malt beverages (7.70): U.S. customary units (fl oz, pint, quart, gallon);
+  metric optional and only in addition.
+
+  Implication: normalize to a canonical volume (e.g. mL) and compare. "750 mL"
+  vs "750ml" vs "750 ml" should all normalize equal.
+
+2.4.5 NAME AND ADDRESS (producer / bottler / importer)
+  - Must state the person and the city/state (address) where the operation
+    occurred or principal place of business (5.66, 4.35, 7.66).
+  - Preceded by a function phrase: "bottled by", "distilled by", "produced by",
+    "imported by", etc., as appropriate (5.66(b), 4.35, 7.66).
+  - Imported products: "imported by" + importer name/address (5.68, 4.35(b),
+    7.68); different rules for imported-then-bottled vs imported-in-container.
+  - Trade/operating name must match the permit/notice (5.66(d), 4.35(d),
+    7.66(h)).
+  - Implication: compare normalized name and city/state; the function phrase
+    is significant but has acceptable synonyms.
+
+2.4.6 COUNTRY OF ORIGIN (imports)
+  - TTB defers the country-of-origin MARKING requirement to U.S. Customs and
+    Border Protection: 19 CFR Parts 102 and 134 (5.69, 4.35(e), 7.69).
+  - The assignment lists "Country of origin for imports" as a common element.
+  - Implication: for the prototype, treat country of origin as an extractable
+    field for imports and compare against the application; the precise marking
+    rules live outside TTB's own CFR parts (a scope boundary worth noting).
+
+2.5 FORMAT AND PLACEMENT RULES (APPLY TO ALL MANDATORY FIELDS)
+--------------------------------------------------------------------------------
+
+2.5.1 Legibility and contrast (5.52, 4.38, 7.53)
+  > Mandatory information must be "readily legible under ordinary conditions"
+  > and appear on a contrasting background.
+  Acceptable contrast examples (5.52(c)): black on white/cream, or white/cream
+  on black. (Net contents blown into glass need not contrast.)
+
+2.5.2 Type size
+  Distilled spirits (5.53): >= 2 mm (containers > 200 mL) or >= 1 mm (<=200 mL).
+  Wine (4.38): >= 2 mm (>187 mL) or >= 1 mm (<=187 mL); alcohol content between
+  1 and 3 mm.
+  Malt beverages (7.53): analogous 2 mm / 1 mm thresholds.
+  Health warning: its own size scale (see section 3).
+
+2.5.3 "Separate and apart"
+  Mandatory information (except brand name) must be "separate and apart" from
+  additional information (5.52(b)), with limited exceptions for brief optional
+  phrases. Ingredient disclosures (5.63(c)) may not include additional info.
+
+2.5.4 Language
+  Mandatory information in English, except the brand name (5.55). Spanish
+  permitted for Puerto Rico consumption. Foreign-language translations allowed
+  if non-conflicting.
+
+2.5.5 Placement / field of vision
+  Distilled spirits: brand name, class/type, and alcohol content must share one
+  field of vision (5.63(a)); name/address and net contents may be anywhere.
+  Wine: brand name + class/type on the brand (front) label (4.32(a)).
+  Malt beverages: all mandatory info on "a label or labels" (7.63(a)).
+
+2.5.6 Firmly affixed
+  Labels must be affixed so they cannot be removed without water/solvents
+  (5.51, 4.38(e), 16.22(c)).
+
+2.6 REGULATORY SCOPE BOUNDARIES (WHAT THE PROTOTYPE DOES NOT NEED)
+--------------------------------------------------------------------------------
+  - COLA application submission / COLAs Online integration: explicitly out of
+    scope per the assignment (standalone proof-of-concept).
+  - Standards of fill (subpart K of Part 5; 4.72 for wine) govern the legal
+    bottle SIZES, not the label text; only relevant to net-contents validation.
+  - Advertising rules (subpart N of each part) govern ads, not labels; out of
+    scope.
+  - Permits, formulas, tax (Parts 1, 19, 25, 26, 27, 28) are out of scope.
+  - Penalty provisions (16.33, labeling act penalty) are background, not a
+    feature.
+
+2.7 WHAT "VERIFYING A LABEL" MEANS, REDUCED TO RULES
+--------------------------------------------------------------------------------
+The tool's core job reduces to a comparison engine with per-field semantics:
+
+  FIELD            MATCHING SEMANTIC
+  --------------   -----------------------------------------------------------
+  Brand name       Normalized string compare (case/punct-tolerant); matched
+                   against application Item 6.
+  Class/type       Extracted from label; optional controlled-vocabulary check
+                   (subpart I). Not an application field.
+  Alcohol content  Parse to canonical ABV number from any legal format; check
+                   legal format + tolerance; cross-check proof = 2 x ABV. Not
+                   an application field.
+  Net contents     Parse to canonical volume (mL); compare equal (unit-
+                   tolerant); legal standard-of-fill check optional. Not an
+                   application field.
+  Name/address     Normalized compare vs application Item 8; function-phrase
+                   synonyms allowed.
+  Country of       Normalized compare (imports); CBP 19 CFR 102/134 nuance
+  origin           noted. Matched against application Item 3 (domestic/imported)
+                   and, if asserted, the origin string.
+  Government       EXACT text + format checks (all caps bold "GOVERNMENT
+  warning          WARNING:", correct wording). See section 3.
+  Presence/format  Each required field must EXIST and be legible/contrasting/
+                   minimum size/English/separate-and-apart. These are checks,
+                   not just text comparisons.
+
+Two matching philosophies coexist and must not be conflated:
+  - FUZZY/NORMALIZED matching for values where the regulation tolerates
+    formatting variation (brand name case, alcohol format, net contents units).
+  - EXACT matching for the government warning, where wording is word-for-word
+    mandatory and case/bold are themselves requirements.
+
+================================================================================
+3. GOVERNMENT HEALTH WARNING STATEMENT - EXACT REQUIREMENTS
+================================================================================
+Source: 27 CFR Part 16 (Alcoholic Beverage Health Warning Statement),
+implementing the Alcoholic Beverage Labeling Act of 1988. Applies to ALL
+alcohol beverages at >= 0.5% alcohol by volume. Verbatim text quoted with "> ".
+
+This field is the hardest verification case because it is word-for-word
+mandatory AND its formatting (caps, bold) is itself a requirement. The
+junior-agent interview flagged exactly this: title-case "Government Warning"
+instead of all caps was a rejection.
+
+3.1 THE EXACT REQUIRED TEXT (27 CFR 16.21)
+--------------------------------------------------------------------------------
+The regulation states there shall be stated, on the brand label or separate
+front label, or on a back or side label, SEPARATE AND APART from all other
+information, the following statement:
+
+  > GOVERNMENT WARNING: (1) According to the Surgeon General, women should not
+  > drink alcoholic beverages during pregnancy because of the risk of birth
+  > defects. (2) Consumption of alcoholic beverages impairs your ability to
+  > drive a car or operate machinery, and may cause health problems.
+
+Notes for a faithful implementation:
+  - The label text is the two numbered sentences joined, with "(1)" and "(2)"
+    markers, a period after "birth defects." then the "(2) ..." sentence.
+    On physical labels the two sentences are often on separate lines, but the
+    words and punctuation are identical.
+  - Exact punctuation: colon after "WARNING", periods at the end of each
+    numbered sentence, comma after "drive a car or operate machinery".
+  - No "and" between the two sentences; no extra words.
+
+3.2 FORMAT REQUIREMENTS (27 CFR 16.22)
+--------------------------------------------------------------------------------
+> 16.22(a) Legibility.
+>  (1) Readily legible under ordinary conditions; on a contrasting background.
+>  (2) The first two words, i.e. "GOVERNMENT WARNING," shall appear in capital
+>      letters and in bold type. The REMAINDER of the warning statement may not
+>      appear in bold type.
+>  (3) Letters/words shall not be compressed in a manner that makes the warning
+>      not readily legible.
+>  (4) Maximum number of characters per inch, as follows:
+
+    Minimum required type size      Maximum characters per inch
+    ----------------------------    ---------------------------
+    1 millimeter                    40
+    2 millimeters                   25
+    3 millimeters                   12
+
+> 16.22(b) Size of type.
+>  (1) Containers <= 237 mL (8 fl. oz.): type not smaller than 1 millimeter.
+>  (2) Containers > 237 mL up to 3 L (101 fl. oz.): not smaller than 2 mm.
+>  (3) Containers > 3 L (101 fl. oz.): not smaller than 3 mm.
+
+> 16.22(c) Labels firmly affixed. Labels bearing the statement that are not an
+> integral part of the container must be affixed so they cannot be removed
+> without thorough application of water or other solvents.
+
+3.3 WHY THIS IS THE HARD CASE FOR THE TOOL
+--------------------------------------------------------------------------------
+Three separable checks, of increasing difficulty:
+
+  (1) PRESENCE: does the label carry the warning at all? (Binary; easy.)
+
+  (2) WORDING (exact): does the extracted text match the canonical statement
+      word-for-word? Must tolerate OCR character errors but must NOT tolerate
+      real deviations. Correct approach: normalized edit-distance / fuzzy-match
+      against the single canonical string with a tight threshold, then surface
+      near-misses for human review rather than silently passing or failing.
+      Any wording change (e.g. dropped "(2)", "Government Warning" case change)
+      is a rejection in the real workflow.
+
+  (3) FORMAT: is "GOVERNMENT WARNING:" (with colon) in all caps and bold, and
+      the remainder NOT bold? On a contrasting background, sufficient size?
+      Detecting BOLD from an image is feasible but not perfectly reliable
+      (font-weight estimation). Caps are detectable via OCR case. Font size/
+      contrast are estimable but approximate.
+
+  Recommended stance for the prototype:
+      - Implement (1) and (2) as deterministic checks.
+      - For (3), detect the all-caps property reliably (string-level), and
+        report bold/size/contrast as BEST-EFFORT heuristic flags with an
+        explicit "human confirm" indicator, since pixel-based bold and font-
+        size detection is unreliable and the cost of a false negative (missing
+        a real violation) is high.
+
+3.4 VERIFICATION SEMANTIC SUMMARY
+--------------------------------------------------------------------------------
+  - Canonical string (single source of truth), stored verbatim.
+  - Comparison: normalize whitespace/newlines; allow OCR-confusable character
+    substitutions only via fuzzy matching; report a confidence + diff.
+  - The "GOVERNMENT WARNING:" prefix must be all-caps in the extracted text
+    (title-case or mixed-case = flag).
+  - Do not rely on a generative model to "remember" the text: always compare
+    against the canonical string deterministically (see section 5).
+
+3.5 IMPLEMENTATION STATUS NOTE 
+--------------------------------------------------------------------------------
+KNOWN GAP - the current implementation is NOT up to spec here. The labeld
+verification engine checks only warning PRESENCE, WORDING, and the all-caps
+"GOVERNMENT WARNING:" prefix. The 27 CFR 16.22 FORMAT requirements are not
+implemented at all:
+
+  - bold on the first two words / non-bold remainder (16.22(a)(2));
+  - minimum type size by container volume (16.22(b));
+  - maximum characters per inch (16.22(a)(4));
+  - legibility and contrasting background (16.22(a)(1));
+  - "separate and apart" from other information (16.21), plus the analogous
+    legibility/contrast/type-size rules in 5.52-5.53, 4.38, and 7.53.
+
+This falls short of sections 3.3, 7.6.7(c), and 7.6.8, which call for these to
+be emitted as best-effort heuristic flags with a "human confirm" indicator. A
+label whose warning string is correct but printed in the wrong size, non-bold,
+or low contrast is currently reported Approved with no signal that those checks
+were never run. Accepted as a prototype gap (pixel-based bold/size detection is
+unreliable without a scale reference, per 8.4), but recorded for follow-up.
+
+================================================================================
+4. THE EXISTING COLA SYSTEM AND DATA MODEL
+================================================================================
+
+4.1 HOW THE SYSTEM WORKS
+--------------------------------------------------------------------------------
+The "form" is TTB F 5100.31 - Application for and Certification/Exemption of
+Label/Bottle Approval (COLA). Two submission channels:
+
+  - COLAs Online (since 2003) - the dominant path. Fields are typed into a web
+    form (checkboxes + text boxes); label artwork is uploaded as images/PDF.
+    Structured input, not an image.
+  - Paper filing - legacy path. Applicant prints/types the form, signs in ink,
+    and physically affixes the labels (glue/tape, "DO NOT STAPLE").
+
+COLAs Online is a digital mirror of Form 5100.31 (help docs: "Create an
+Application", "View Application Detail", "Printable e-filed COLA", "Printable
+paper-filed COLA"). The Public COLA Registry exposes approved COLA records for
+read-only search.
+
+4.2 THE FORM'S FIELD LIST (TTB F 5100.31, items 1-20)
+--------------------------------------------------------------------------------
+  Item   Field                                   Required
+  ----   -------------------------------------   ---------------------------
+  1      Representative ID No.                   no
+  2      Plant Registry / Basic Permit /
+         Brewer's No.                            yes (may repeat per location)
+  3      Source of Product: Domestic/Imported    yes
+  4      Serial Number (e.g. "24-123")           yes
+  5      Type of Product: Wine / Distilled
+         Spirits / Malt Beverages                yes
+  6      Brand Name                              yes
+  7      Fanciful Name                           no
+  8      Name & Address of Applicant             yes
+  8a     Mailing Address (if different)          no
+  9      Formula (TTB Formula ID)                no
+  10     Grape Varietal(s)                       wine only
+  11     Wine Appellation (if on label)          no
+  12     Phone Number                            no
+  13     Email Address                           no
+  14     Type of Application (a-d)               yes
+  15     Blown/branded/embossed text +
+         translations of foreign text            no
+  16     Date of Application                     yes
+  17     Signature (applicant/agent)             yes (wet/ink)
+  18     Print Name of signer                     yes
+  19     Date Issued (TTB)                       TTB use
+  20     Authorized Signature (TTB)              TTB use
+  --     AFFIX COMPLETE SET OF LABELS            (the artwork)
+
+Item 14 sub-parts:
+  a. Certificate of Label Approval (COLA)
+  b. Certificate of Exemption ("For sale in ___ only", State abbreviation)
+  c. Distinctive Liquor Bottle Approval (total bottle capacity before closure)
+  d. Resubmission After Rejection (TTB ID)
+
+CRITICAL FINDING - what is NOT on the form:
+  The 5100.31 has no field for alcohol content, net contents, class/type
+  designation, or the government warning. Item 5 is only the commodity category
+  (wine/spirits/malt), NOT the class/type like "Kentucky Straight Bourbon
+  Whiskey". ABV, net contents, class/type, and the warning are verified from
+  the label artwork against the regulations, not matched to a form value. The
+  form's only label-matchable free-text fields are brand name (Item 6) and
+  applicant name/address (Item 8).
+
+  This contradicts a simplification in the take-home: its "Sample Label" lists
+  Brand Name, Class/Type, Alcohol Content, Net Contents, Government Warning as
+  if they were application fields. In the real system, four of those five are
+  label-only. See section 4.7.
+
+4.3 THE E-APPLICATION STATUS VOCABULARY
+--------------------------------------------------------------------------------
+From COLAs Online FAQ C22/C23, an e-application's status is one of:
+
+  Received, Approved, Conditionally Approved, Needs Correction, Rejected
+
+  - "Needs Correction" = TTB cannot approve as submitted; intermediate step
+    giving the submitter a chance to bring the application into compliance.
+  - "Rejected" = final adverse action.
+  - "Conditionally Approved" = a newer intermediate state.
+
+This vocabulary is directly reusable for the prototype's output verdicts
+(section 4.8).
+
+4.4 THE LABEL-IMAGE FILE CONTRACT (FAQ C28-C32)
+--------------------------------------------------------------------------------
+This is the interoperability gold - the exact input contract COLAs Online
+enforces for label images:
+
+  - Format: JPEG (.jpg, .jpeg) or PNG (.png) ONLY. TIFF is rejected.
+  - Size: no single label image may exceed 1.5 MB.
+  - Resolution: at least 120-170 dpi recommended; JPEG quality "Medium"
+    (7/10 or 70/100).
+  - One file per label surface: brand, back, neck, etc., each uploaded as a
+    separate file.
+  - Cropped to the label itself: "the edges of the image just touch the label"
+    (crop out all background/white space).
+  - Attachments (letterhead, organic cert): DOC (.doc/.docx), TEXT (.txt),
+    PDF (.pdf), or JPEG (.jpg/.jpeg/.jpe).
+
+4.5 THE INTEROPERABILITY CEILING
+--------------------------------------------------------------------------------
+  - No public API. COLAs Online lives at ttbonline.gov behind registration,
+    MFA, and third-party-filer roles. The Public COLA Registry is read-only
+    search and is bot-protected (Akamai CAPTCHA; not programmatically
+    accessible without a human).
+  - Therefore "interoperate" is achievable as SCHEMA/CONTRACT PARITY, not as
+    "call a COLA API": a real COLAs Online e-application could be mapped into
+    the JSON below with a thin converter, and back out, with no semantic drift.
+  - The assignment itself says COLA integration is out of scope; this schema
+    merely keeps the door open for a future procurement/workflow integration.
+
+4.6 RECOMMENDED JSON SCHEMA (A FIELD-FOR-FIELD 5100.31 MIRROR)
+--------------------------------------------------------------------------------
+
+  // COLAApplication mirrors TTB Form 5100.31. Keys are the form's own terms.
+  type COLAApplication struct {
+      RepresentativeID    *string  `json:"representative_id,omitempty"`     // Item 1
+      PermitNumbers       []string `json:"permit_numbers"`                  // Item 2 (repeats)
+      Source              string   `json:"source"`                          // Item 3: "domestic"|"imported"
+      SerialNumber        string   `json:"serial_number"`                   // Item 4: "24-123"
+      ProductType         string   `json:"product_type"`                    // Item 5: "wine"|"distilled_spirits"|"malt_beverages"
+      BrandName           string   `json:"brand_name"`                      // Item 6
+      FancifulName        *string  `json:"fanciful_name,omitempty"`         // Item 7
+      Applicant           Party    `json:"applicant"`                       // Item 8
+      MailingAddress      *Party   `json:"mailing_address,omitempty"`       // Item 8a
+      FormulaID           *string  `json:"formula_id,omitempty"`            // Item 9
+      GrapeVarietals      []string `json:"grape_varietals,omitempty"`       // Item 10 (wine)
+      WineAppellation     *string  `json:"wine_appellation,omitempty"`      // Item 11
+      Phone               string   `json:"phone,omitempty"`                 // Item 12
+      Email               string   `json:"email,omitempty"`                 // Item 13
+      ApplicationType     AppType  `json:"application_type"`                // Item 14
+      ContainerMarks      string   `json:"container_marks,omitempty"`       // Item 15 (blown/embossed)
+      Translations        string   `json:"translations,omitempty"`          // Item 15
+      ApplicationDate     string   `json:"application_date"`                // Item 16
+      SignerName          string   `json:"signer_name"`                     // Item 18 (Item 17 sig is ink, not machine-checkable)
+  }
+
+  type Party struct {
+      Name    string `json:"name"`    // exactly as on permit/notice, incl. DBA
+      Address string `json:"address"` // city + state (postal abbr allowed)
+  }
+
+  type AppType struct {
+      Kind                      string  `json:"kind"` // "cola"|"exemption"|"distinctive_bottle"|"resubmission"
+      ExemptionState            *string `json:"exemption_state,omitempty"`            // Item 14b
+      DistinctiveBottleCapacity *string `json:"distinctive_bottle_capacity,omitempty"` // Item 14c
+      ResubmissionTTBID         *string `json:"resubmission_ttb_id,omitempty"`        // Item 14d
+  }
+
+  // LabelImage mirrors the COLAs Online file contract (FAQ C28-C32).
+  type LabelImage struct {
+      Surface string `json:"surface"` // "brand"|"back"|"neck"|"other" - one file per surface
+      MIME    string `json:"mime"`    // image/jpeg | image/png ONLY
+      Data    []byte `json:"-"`       // multipart file; enforce <= 1.5 MB
+  }
+
+  type VerifyRequest struct {
+      Application COLAApplication   `json:"application"`
+      Labels      []LabelImage       `json:"labels"`
+      Expected    *LabelExpectations `json:"expected,omitempty"` // NON-COLA extension (see 4.7)
+  }
+
+Enforce the COLA file contract in the handler: reject TIFF, reject >1.5 MB,
+require `surface` per image, and validate `product_type`/`source`/
+`application_type.kind` against the form's enums.
+
+4.7 THE SEMANTIC GAP 
+--------------------------------------------------------------------------------
+The 5100.31 mirror has no field for alcohol content, net contents, class/type,
+or the warning - because the real form does not either. The only things the
+application side actually asserts that you can match against the label are:
+
+  - Brand name (Item 6)  -> label brand name
+  - Name & address (Item 8) -> label "bottled by / imported by" statement
+  - Product type (Item 5) and Source (Item 3) -> which regulatory part applies
+
+So the faithful contract is: ABV, net contents, class/type, and the warning
+are DERIVED from `labels[]` and validated against 27 CFR 4/5/7/16 - not matched
+to a form field. That is how the real review works.
+
+If the take-home's richer "expected values" are wanted (a place to paste
+expected ABV/net-contents/class-type), keep them in a SEPARATE, clearly-marked
+extension block (`expected` above), so the `application` object stays a pure
+5100.31 mirror and the extension does not pollute interoperability.
+
+4.8 VERDICT VOCABULARY - REUSE COLA'S STATUSES
+--------------------------------------------------------------------------------
+Map the three-way verdict onto the real status model so output reads naturally:
+
+  PASS  -> "Approved"
+  FLAG  -> "Needs Correction"   (fixable, human confirms)
+  FAIL  -> "Rejected"           (missing field / exact-warning failure)
+
+("Conditionally Approved" exists too but is an e-application lifecycle state,
+not a per-field verdict - leave it out of v1.)
+
+================================================================================
+5. IMAGE / TEXT EXTRACTION - PROCESSING MODEL OPTIONS
+================================================================================
+Scope: how to turn a photographed label into (a) structured field values and
+(b) the exact government-warning text, within the ~5 second budget, tolerating
+imperfect photos (angles, glare, bad lighting). Secondary to the regulations
+but central to feasibility.
+
+The task splits into two different cognitive jobs, and no single model is best
+at both:
+
+  JOB A - DETERMINISTIC TEXT EXTRACTION (OCR). Read the characters/words and
+  where they are. Needs to be FAST and CHARACTER-ACCURATE. This is what must
+  feed the exact government-warning comparison.
+
+  JOB B - STRUCTURAL UNDERSTANDING (which text is which field). On a decorated
+  label, "45% Alc./Vol." is alcohol content, "750 mL" is net contents, "OLD TOM
+  DISTILLERY" is the brand. Needs LAYOUT + SEMANTIC reasoning, which is where
+  multimodal LLMs shine (and plain OCR is weak).
+
+5.1 OPTION CLASSES
+--------------------------------------------------------------------------------
+
+5.1.1 MANAGED CLOUD OCR (deterministic)  [DECISION: Textract raw OCR]
+  - AWS Textract DetectDocumentText (raw/pure text OCR) - SELECTED. Returns
+    lines/words with bounding boxes and per-word confidence; no form/table
+    structure. Synchronous, sub-5s for a single page, ~$1.50/1,000 pages.
+    Deterministic, cheap, no hallucination.
+  - AWS Textract AnalyzeDocument (forms/tables key-value) - CLOSED. Costs
+    ~$50-65/1,000 pages and needs predictable layouts; weak on decorative,
+    free-form bottle labels. The pure text path is sufficient.
+  - Google Cloud Document AI / Vision OCR - CLOSED (second cloud + cross-cloud
+    dependency; no advantage for this scope).
+  - Azure AI Document Intelligence (formerly Form Recognizer) - CLOSED (TTB is
+    on Azure today, but this prototype is scoped single-cloud AWS).
+  Strengths (of the selected option): fast, deterministic, cheap, no
+  hallucination. Weaknesses: no semantic sense of "which text is the brand
+  name" on a non-form layout; degraded on rotated/glared images without
+  pre-processing (mitigated by the Bedrock criteria + pre-processing).
+
+5.1.2 MANAGED MULTIMODAL LLM (vision)  [DECISION: AWS Bedrock - REJECTED for the prototype; see 5.5]
+  - Amazon Bedrock: hosted Claude (Anthropic) and Amazon Nova Pro/Lite vision
+    models - originally SELECTED, now REJECTED for the prototype (see 5.5):
+    the shipped engine is 100% deterministic and no Bedrock call is
+    implemented. Used NOT for extraction but for the LLM Boolean criteria
+    (7.6.9): field disambiguation, class/type conformance, function-phrase
+    equivalence. Receives OCR text, returns strict-JSON verdicts; never
+    transcribes.
+  - OpenAI GPT-4o / GPT-4.1 (vision), Google Gemini (vision) - CLOSED (external
+    vendors; the single-cloud AWS posture rules them out).
+  Strengths: layout robustness, natural field identification, glare/angle
+  tolerance, structured JSON output. Weaknesses: (a) LATENCY often 3-10s+,
+  which can violate the 5-second budget - mitigated by running IN PARALLEL with
+  the deterministic criteria and bounding with a timeout; (b) COST higher
+  per-call; (c) HALLUCINATION may "correct" or invent characters - fatal for
+  word-for-word warning verification, so the LLM never transcribes;
+  (d) non-determinism.
+
+5.1.3 SELF-HOSTED OPEN SOURCE  [CLOSED for the prototype]
+  - PaddleOCR, Tesseract 5, EasyOCR, DeepSeek-OCR, and self-hosted vision LLMs
+    (Qwen2.5-VL, Llama-Vision) are all viable for a future production
+    deployment needing data sovereignty, but are CLOSED for this prototype:
+    they require operating GPU infrastructure and model serving, out of scope.
+    Retained only as the documented fallback (see 5.4).
+  Strengths: no per-call cost, full data control (federal-friendly), no outbound
+  dependency on third-party endpoints. Weaknesses: you own the infrastructure
+  (GPU), model serving, and updates.
+
+5.2 THE ARCHITECTURAL INSIGHT (IMPORTANT)
+--------------------------------------------------------------------------------
+Do not let a generative model near exact-string verification. Division of labor:
+
+  (1) Deterministic OCR extracts ALL text with positions and per-character
+      confidence (Job A). Fast and reproducible.
+  (2) A field-mapping step assigns text to fields (brand, class/type, ABV, net
+      contents, name/address, origin, warning). This can be:
+        - rule/heuristic (regex on ABV/volume patterns, position-based), or
+        - a multimodal LLM that receives the OCR text (NOT trusted to
+          transcribe) and outputs field assignments.
+  (3) Verification is a CONJUNCTION of Boolean criteria (see 7.6.9):
+        - deterministic fuzzy-string criteria (normalize + compare; edit-
+          distance against the canonical warning string), AND
+        - AWS Bedrock LLM criteria for checks that need semantic judgment
+          (class/type conformance, brand-vs-marketing-copy disambiguation).
+      The LLM never transcribes and never decides "match vs mismatch" for the
+      exact warning wording or for ABV numbers.
+
+Why: an LLM transcribing "GOVERNMENT WARNING: (1) According to the Surgeon
+General..." will occasionally drop or reword a token. A deterministic OCR
+string compared against the canonical text cannot "rewrite" the label.
+
+5.3 COMPARISON TABLE (historical reference; decision is in 5.4)
+--------------------------------------------------------------------------------
+  Option                        Latency   Accuracy  Cost/unit   Halluc.  Data control
+  ---------------------------   -------   --------  ---------   -------  -----------
+  AWS Textract (raw OCR)        ~1-3s     High      $/page      None     AWS only
+  AWS Textract (forms)          ~2-4s     High*     $$$/page    None     AWS only
+  Google Document AI            ~1-3s     Very high $/page      None     Google
+  Azure Document Intelligence   ~1-3s     Very high $/page      None     Azure
+  Bedrock Claude/Nova (vision)  ~3-10s+   High      $$/call     Yes      AWS only
+  GPT-4o / Gemini (vision)      ~3-10s+   High      $$/call     Yes      External
+  PaddleOCR (self-host)         ~0.1-1s   Very high $0 (infra)  None     Full
+  Tesseract (self-host)         ~0.1-0.5s Medium    $0 (infra)  None     Full
+  DeepSeek-OCR (self-host)      ~0.5-2s   High      $0 (infra)  None     Full
+
+  * Textract "forms" is accurate on form-like documents but weaker on free-form
+    decorative labels; treat its key-value mode as optional, not core.
+
+5.4 DECISION 
+--------------------------------------------------------------------------------
+EXTRACTION: AWS Textract DetectDocumentText (raw/pure text OCR) is the single
+extractor for the initial text-extraction step. CLOSED: Textract AnalyzeDocument
+(forms/tables), Google Document AI, Azure Document Intelligence, and all
+self-hosted OCR (PaddleOCR/Tesseract/DeepSeek-OCR). Pure text extraction is
+chosen over document/forms analysis because the label is a decorative free-form
+surface, not a form; raw OCR is faster, cheaper, and sufficient - structure is
+recovered by the field-mapping and verification stages, not by the OCR vendor.
+
+Field mapping (which text is which field): regex/heuristics first, resolved
+deterministically. A Bedrock LLM criterion was ORIGINALLY proposed for
+uncertain cases (7.6.9) but is REJECTED for the prototype (see 5.5): residual
+uncertainty is handled by position/qualifier/layout heuristics and, where
+unresolved, surfaced as Needs Correction for human review rather than answered
+by a generative model.
+
+Firewall: because all processing runs server-side inside AWS, the TTB client's
+outbound firewall only needs to reach the app's own HTTPS endpoint - it never
+needs to reach Textract or Bedrock directly. This neutralizes the exact failure
+that killed the prior vendor pilot. (See section 6.)
+
+Data-sovereignty fallback (documented, NOT prototype): PaddleOCR on a GPU EC2
+instance for a future production review if managed-service image transfer is
+ever disallowed.
+
+5.5 BEDROCK LLM CRITERIA - REJECTED FOR THE PROTOTYPE (RESOLVED)
+--------------------------------------------------------------------------------
+Finding (post-implementation): the prototype does not need the Bedrock LLM.
+The shipped verification engine is 100% deterministic - every criterion in
+verify.go is normalization, regex, or edit-distance; there is no
+bedrock-runtime dependency, no bedrock:InvokeModel IAM grant, and no LLM call
+anywhere in the code path. The Bedrock references that remain in this document
+(5.1.2, 5.4, 6.x, 7.6.9) are design notes, not behavior. OCR is Textract
+DetectDocumentText (deterministic), not an LLM.
+
+Rationale - why pure determinism + Textract suffices:
+
+  (1) The problem itself is matching, not reasoning. Per the deputy-director
+      interview ("just... matching... the number on the form is the same as
+      the number on the label"), every acceptance criterion (7.9) is a
+      string/number comparison already realized by a deterministic check:
+      case/punct-tolerant brand match, canonical ABV + tolerance, canonical
+      mL net contents, function-phrase synonyms, and exact/tight-edit warning
+      wording. None of these is LLM-shaped.
+
+  (2) The criteria originally reserved for Bedrock (7.6.9 class B) each have
+      a deterministic resolution:
+        - class/type conformance: subpart I is a FINITE controlled vocabulary,
+          so it is a lookup, not an open-ended judgment call;
+        - brand-vs-marketing-copy disambiguation: position/qualifier/layout
+          heuristics (e.g. the ABV qualifier window) handle this; residual
+          ambiguity should degrade to Needs Correction, not to a model;
+        - function-phrase equivalence: already regex synonyms.
+
+  (3) Latency: the hard 5s budget (1.4) and this doc's own comparison table
+      (5.3) place Bedrock vision at 3-10s+. "Run in parallel + timeout" means
+      a slow call discards its own signal by degrading to Needs Correction -
+      paying per-call for a verdict you throw away. Deterministic checks are
+      ~0ms.
+
+  (4) Determinism and auditability: a compliance verdict must be reproducible
+      and regression-testable. A generative criterion is non-deterministic and
+      hard to test; the evaluation rubric rewards scope-appropriate choices,
+      and for this scope the appropriate choice is deterministic.
+
+  (5) Hallucination boundary: this doc already confines the LLM away from the
+      exact-string fields (warning wording, ABV) because it can "correct" or
+      invent characters (5.1.2(c), 5.2). Those are the fields that matter most
+      and are already exact/deterministic; the residual "judgment" fields are
+      the least load-bearing.
+
+  (6) Surface and cost: Bedrock adds a second AWS service (credential, IAM
+      grant, per-call cost, timeout machinery) for criteria no acceptance test
+      requires. Textract is already in place for extraction.
+
+Decision: DROP Bedrock for the prototype. Verification is deterministic
+fuzzy-string + Textract only. Where an LLM could genuinely earn its keep
+(semantic field disambiguation at scale on decorative/glared labels), defer it
+behind the deterministic field-mapping heuristics; revisit only if a future
+requirement demands judgment beyond a controlled vocabulary. Jenny's
+imperfect-image ask (1.4) is an OCR/pre-processing robustness problem,
+not an LLM problem.
+
+================================================================================
+6. DEPLOYMENT AND ARCHITECTURE (SINGLE-CLOUD AWS)
+================================================================================
+Scope: how to host a standalone prototype backend (likely Go) and the image-
+processing path on AWS, meeting the hard constraints: ~5s per-label synchronous
+results, 200-300 label batch uploads, and the TTB firewall situation.
+
+6.1 WHY SINGLE-CLOUD AWS ADDRESSES THE FIREWALL PROBLEM
+--------------------------------------------------------------------------------
+The IT-admin interview is decisive:
+
+  > "Our network blocks outbound traffic to a lot of domains... During the
+  > scanning vendor pilot, half their features didn't work because our firewall
+  > blocked connections to their ML endpoints."
+
+Two ways this bites:
+
+  (a) CLIENT-SIDE processing (OCR in the browser / on TTB desktops calling
+      external ML endpoints) is the wrong shape - the TTB network will block
+      the endpoints, exactly as it did before.
+
+  (b) SERVER-SIDE processing inside one cloud is the right shape: the browser
+      talks HTTPS only to the app's own AWS endpoint; the app then calls AWS
+      services (Textract/Bedrock/S3) over AWS's own network. The client
+      firewall sees only one whitelistable domain. No third-party ML endpoints
+      in the client path.
+
+So a single cloud (AWS) is not merely a preference; it is the design that
+survives the stated network constraint. Any external model vendor (OpenAI,
+Google, Azure) used from the backend also stays off the client network, but
+concentrating on AWS avoids cross-cloud egress, credential sprawl, and
+vendor-to-vendor latency.
+
+6.2 COMPUTE OPTIONS  [DECISION: single Go monolith]
+--------------------------------------------------------------------------------
+The backend is ONE Go process (monolith) with a goroutine per in-flight label,
+deployed on one instance - a single ECS Fargate task or a small EC2 instance.
+Rationale: the process is I/O-bound waiting on Textract/Bedrock, so its own
+capacity is irrelevant; one process with goroutines is simpler and cheaper than
+a serverless fan-out (see 6.7 for the worst-case numbers).
+
+  Option              Fit
+  -----------------   ---------------------------------------------------------
+  ECS on Fargate      Containerized Go monolith, no servers to
+                      manage. One task is plenty; it only orchestrates
+                      Textract/Bedrock calls.
+  EC2 [CHOSEN]        Equivalent alternative if a persistent box is preferred.
+                      GPU only if self-hosting OCR (out of scope - 5.4).
+  AWS Lambda          REJECTED for this workload: bills wall-clock duration, so
+                      it pays for the seconds spent blocked waiting on
+                      Textract/Bedrock (see 6.7.3).
+  EKS (Kubernetes)    Overkill for a prototype; justified only at scale.
+  Managed ML          AWS Textract (OCR) and Bedrock (LLM) carry the real work
+                      and need no compute you manage.
+
+  Baseline: single Go monolith on one ECS Fargate task (or small EC2 instance);
+  image storage in S3; OCR via Textract (DetectDocumentText); LLM Boolean
+  criteria via Bedrock in parallel goroutines; batch via SQS + goroutine pool
+  (see 6.3.2).
+  Fallback: Go backend + PaddleOCR on a GPU EC2 if a future requirement forbids
+  sending label images to a managed service.
+
+6.3 THE TWO PROCESSING SHAPES: SYNC (5s) AND ASYNC (BATCH)
+--------------------------------------------------------------------------------
+  6.3.1 SYNC PATH (single label, the ~5s guarantee)
+      Browser -> HTTPS -> API -> Textract DetectDocumentText (1-3s) ->
+      fan out: ALL verification criteria run IN PARALLEL (deterministic fuzzy
+      criteria + Bedrock LLM criteria) -> AND the results -> JSON -> browser.
+      The OCR step is the only serial gate; every criterion downstream is
+      independent and runs concurrently, so verification latency is
+      max(criterion latency), not the sum. Bedrock criteria are bounded (strict
+      JSON schema, timeout) so a slow generative call degrades that one
+      criterion to Needs Correction rather than blowing the 5s budget.
+
+  6.3.2 ASYNC PATH (200-300 labels, peak-season importers)
+      Browser -> multipart upload -> S3 -> SQS message per image (durability/
+      retry) -> the SAME monolith drains the queue with a bounded goroutine
+      pool (same OCR + parallel verify per image) -> results persisted ->
+      browser polls status / receives results.
+      Requirements: job id, per-label status, partial-progress reporting,
+      retry on transient OCR failure, and a results summary (pass/fail/flag
+      per label + count). Batch is a first-class feature, not an afterthought.
+
+6.4 DATA FLOW (SINGLE CLOUD)
+--------------------------------------------------------------------------------
+  Browser (TTB agent)
+      |  HTTPS (single AWS domain)
+      v
+  API (Go monolith, single instance)
+      |  -> S3 (store uploaded label images; prototype: transient storage)
+      |  -> Textract DetectDocumentText (OCR) [managed, in-AWS, serial gate]
+      |  -> Bedrock (LLM Boolean criteria)    [managed, in-AWS, parallel]
+      v
+  Verification engine (Go): N independent Boolean criteria (deterministic
+  fuzzy-match + Bedrock LLM) evaluated in PARALLEL, then AND-ed -> per-field
+  verdicts + confidence -> JSON
+      v
+  Browser renders verdicts (clean, obvious - see section 7)
+
+6.5 SECURITY / FEDERAL NOTES (PROTOTYPE SCOPE)
+--------------------------------------------------------------------------------
+  - The assignment says: for a prototype, "don't do anything crazy" and "we're
+    not storing anything sensitive for this exercise."
+  - Therefore: no PII retention, transient S3 objects with lifecycle deletion,
+    TLS everywhere, minimal IAM (least privilege), and NO FedRAMP posture work
+    for the prototype (FedRAMP is a production-phase concern - the 2019 Azure
+    migration took 18 months of certification paperwork).
+  - Document the gap: a production deployment would need a formal security
+    review (PII, document retention, FedRAMP) that the prototype defers.
+  - The evaluation criteria reward "appropriate technical choices for the
+    scope" - a clean, small, single-cloud deployment is more credible than an
+    over-built one.
+
+6.6 SCALING NOTE 
+--------------------------------------------------------------------------------
+  ~150k applications/year and heavy 200-300-label seasonal bursts are well
+  within a SINGLE Go monolith: the burst translates to at most a few thousand
+  concurrent in-flight images, which goroutines absorb (see 6.7). The "5
+  seconds" requirement bounds the SYNC path; the BATCH path can be nearline
+  (seconds to a minute for a full batch) without violating the UX constraint.
+  Horizontal scale (a second instance behind a load balancer + a managed queue)
+  is a production-only option, not needed at prototype traffic.
+
+6.7 WORST-CASE LOAD ANALYSIS AND THE MONOLITH DECISION (RESOLVED)
+--------------------------------------------------------------------------------
+Decision: the backend is a SINGLE Go monolith - one process, many goroutines -
+on one instance (a modest EC2 instance or a single ECS Fargate task). NOT
+Lambda, NOT a worker fleet. The worst-case load model below is why.
+
+6.7.1 WORST-CASE LOAD MODEL
+  Throughput: ~150,000 applications/year (stakeholder). Assume 4 label images
+  per application (brand/back/neck + one spare) as an upper bound:
+      ~600,000 label images/year
+      ~2,400 images/workday (250 days)
+      ~300 images/hour (8h day)  =  ~5 images/minute average.
+
+  Peak burst: an importer dumps 200-300 applications at once; worst case 300
+  apps x 4 images = 1,200 images in one dump. Even several such dumps in the
+  same peak hour is only a few thousand images/hour - single-digit images per
+  second, low-double-digit under extreme assumptions.
+
+  Concurrency: each image spends ~1-3s in Textract (sync OCR), then ~0-4s in
+  parallel criteria (Bedrock bounded by timeout); worst-case dwell ~5s/image.
+  To turn the largest dump (1,200 images) around in ~1 minute the monolith
+  needs ~20 images/s through Textract, i.e. ~20-60 in-flight images. Even an
+  extreme self-imposed cap of 1,000 concurrent in-flight images is ~1,000
+  goroutines (a few MB of stacks) plus ~1.5 GB of transient image buffers. Go
+  runs hundreds of thousands of goroutines in one process without strain.
+
+6.7.2 WHY THE MONOLITH IS NOT THE BOTTLENECK
+  CPU: per label the Go work is string normalization, a handful of compares,
+  one edit-distance over ~500 chars, a few regexes (ABV/volume), and JSON
+  marshal - microseconds to a few ms. At 100 labels/s this is <1% of one core.
+  The monolith is effectively idle; ALL the real work (OCR, LLM reasoning)
+  runs in Textract and Bedrock.
+
+  Memory: per in-flight label the monolith holds only the image bytes (<=1.5 MB
+  each, streamed to Textract then released) plus a few KB of OCR text and JSON.
+  A few hundred concurrent labels is tens-to-hundreds of MB; even an extreme
+  1,000 in-flight is ~1.5 GB of transient buffers. Realistic peaks (tens of
+  in-flight images) are trivial for one instance.
+
+  Network: outbound HTTPS to Textract and Bedrock over a pooled HTTP/2
+  connection. One process reuses one connection pool; there is no per-request
+  overhead a second process would relieve.
+
+  The ONLY binding constraint is managed-service quota (Textract sync TPS,
+  Bedrock RPM/TPS), which is service-side, region-dependent, and raisable. The
+  monolith saturates those quotas long before its own CPU/memory/network.
+
+6.7.3 WHY NOT LAMBDA (THE WASTE ARGUMENT)
+  A synchronous label review is I/O-bound: ~3-5s of its wall clock is spent
+  blocked waiting on Textract, then on Bedrock. Lambda bills wall-clock
+  duration x memory, so every request pays for seconds of idle wait - roughly
+  GB-seconds/year of pure waiting at prototype traffic, plus per-request cold
+  starts and re-established connections. A monolith pays for instance uptime
+  instead, reuses one connection pool and one process, and gives deterministic,
+  debuggable behavior with zero orchestration. For this load one instance is
+  both cheaper and simpler.
+
+6.7.4 SCOPE AND LIMITS OF THIS DECISION
+  - Single point of failure and instance upkeep (patching/availability) are
+    accepted for a prototype. Production would add a second instance behind a
+    load balancer and a managed queue - trivial horizontal scale if ever
+    needed, but NOT needed at prototype traffic.
+  - This is a prototype decision, not a production-capacity claim. The honest
+    ceiling is Textract/Bedrock quota, which must be MEASURED, not assumed
+    (see 8.6).
+
+================================================================================
+7. SYSTEM SPECIFICATION (ENGLISH)
+================================================================================
+This is the destination: a plain-English specification of what the system OUGHT
+to do, derived from the assignment and the regulations (sections 2-4). It is
+deliberately free of UI/UX detail (the assignment ranks UI/UX last) and free of
+implementation detail beyond what is needed to define behavior.
+
+7.1 PURPOSE
+--------------------------------------------------------------------------------
+A standalone tool for TTB Compliance Division label-review agents. Given (a)
+one or more photographs of an alcohol beverage label and (b) the label's
+application data (the values asserted on Form 5100.31), the system extracts the
+mandatory label information from the image and reports, per field, whether the
+label matches the application and whether the label satisfies mandatory format
+requirements. Output is a clear per-label verdict an agent can act on in a few
+seconds.
+
+7.2 SCOPE AND NON-GOALS
+--------------------------------------------------------------------------------
+IN SCOPE (prototype):
+  - Accept label images and application data.
+  - Extract and verify the mandatory label fields below.
+  - Single-label interactive mode (target: ~5 seconds).
+  - Batch mode (200-300 labels at once).
+  - Clear, obvious presentation of pass/fail/flag per field.
+NON-GOALS (explicitly deferred):
+  - COLA submission / COLAs Online integration.
+  - Permit, formula, or tax functions.
+  - Advertising review.
+  - Persistent storage of sensitive data / PII (prototype uses transient data).
+  - FedRAMP certification.
+
+7.3 USERS
+--------------------------------------------------------------------------------
+  - Label-compliance agents (primary users): vary from "prints email" to
+    "could build this herself"; half over 50. Must be usable by a 73-year-old
+    benchmark. Clean, obvious, no hunting for buttons.
+  - (Future) reviewers/supervisors who inspect batch results.
+No login complexity is assumed for the prototype; identify reviewers only as
+needed.
+
+7.4 INPUTS (CORRECTED TO MIRROR THE COLA SYSTEM)
+--------------------------------------------------------------------------------
+  7.4.1 Label images: one or more photographs per label, one file per surface
+  (brand, back, neck). Accepted formats: JPEG/PNG ONLY (reject TIFF), <= 1.5 MB
+  each, 120-170 dpi recommended, cropped to the label. This mirrors the COLAs
+  Online file contract (section 4.4). May be imperfect (angle, lighting, glare)
+  - the system should attempt correction and degrade gracefully.
+
+  7.4.2 Application data: a JSON object mirroring TTB Form 5100.31 (section
+  4.6). The fields that participate in matching are:
+        - product_type (Item 5): wine / distilled_spirits / malt_beverages
+        - source (Item 3): domestic / imported
+        - brand_name (Item 6)
+        - applicant name & address (Item 8)
+        - (optional) fanciful name (Item 7), formula (Item 9), varietals (10),
+          appellation (11), application_type (Item 14)
+  The government warning is NOT an application field - it is a fixed legal
+  constant the system checks against the canonical text (section 3).
+
+  7.4.3 IMPORTANT: alcohol content, net contents, class/type, and the warning
+  are NOT supplied by the caller. They are DERIVED from the label images and
+  validated against 27 CFR 4/5/7/16 (section 4.7). If the take-home's richer
+  "expected values" are wanted, they go in a separate `expected` extension
+  block, never in the `application` object.
+
+7.5 PROCESSING PIPELINE
+--------------------------------------------------------------------------------
+  1. INGEST: accept image(s) + application data; create a review record.
+  2. PRE-PROCESS (best effort): deskew, crop to label, reduce glare, normalize
+     contrast, de-rotate.
+  3. EXTRACT: read all text on the label with positions and per-character
+     confidence (deterministic OCR).
+  4. FIELD-MAP: assign extracted text to the mandatory fields (brand name,
+     class/type, alcohol content, net contents, name/address, country of
+     origin, government warning) using layout and pattern rules; a Bedrock
+     vision model MAY assist (see the LLM criteria in 7.6.9) but never
+     transcribes trusted values.
+  5. VERIFY (per field, see 7.6): evaluate all Boolean criteria IN PARALLEL
+     (deterministic fuzzy-string + Bedrock LLM), then AND them into the overall
+     verdict.
+  6. REPORT: produce per-field verdicts and an overall label verdict:
+     Approved / Needs Correction / Rejected, each with the extracted text and
+     the compared value so the agent can see WHY.
+
+7.6 VERIFICATION RULES (THE CORE CONTRACT)
+--------------------------------------------------------------------------------
+Two matching philosophies coexist and MUST NOT be conflated:
+  (A) NORMALIZED matching - for fields where the regulation permits formatting
+      variation. Compare canonicalized values.
+  (B) EXACT matching - for the government warning, where wording is word-for-
+      word mandatory and case/bold are themselves requirements.
+
+Per-field rules:
+
+  7.6.1 BRAND NAME - normalized compare vs application Item 6. Canonicalize
+  case, whitespace, punctuation (smart quotes -> straight, apostrophes/
+  possessives). A case-only difference ("STONE'S THROW" vs "Stone's Throw") is
+  a MATCH. Report a mismatch only on substantive difference. Missing -> fail.
+
+  7.6.2 CLASS/TYPE DESIGNATION - extracted from the label; normalize and,
+  optionally, validate against a controlled vocabulary of legal standards of
+  identity (subpart I of 27 CFR 4/5/7). Missing -> fail. (Not an application
+  field; if `expected.class_type` is provided, compare against it too.)
+
+  7.6.3 ALCOHOL CONTENT - parse to a canonical ABV number from any legal format
+  and check it is a legal statement; apply tolerance where a value is asserted:
+        distilled spirits: +/- 0.3 percentage points (5.65(c))
+        malt beverages:   +/- 0.3 percentage points (7.65(c))
+        wine:             +/- 1.0 (>14%) or 1.5 (<=14%) (4.36(b))
+  If proof is stated, cross-check proof = 2 x ABV and flag if inconsistent.
+  Wine <=14% ABV: content NOT required if "table"/"light" present. Malt: content
+  only mandatory in the added-flavor-alcohol case (7.63(a)(3)).
+
+  7.6.4 NET CONTENTS - parse to a canonical volume (mL) tolerating unit
+  variants ("750 mL", "750ml", "750 ml", "25.4 fl. oz."). Check presence and
+  legal standard of fill (optional). Missing -> fail. (Not an application
+  field; if `expected.net_contents` is provided, compare equal.)
+
+  7.6.5 NAME AND ADDRESS - normalized compare vs application Item 8 (name +
+  city/state). Function-phrase synonyms ("bottled by", "distilled by",
+  "produced by", "imported by") are equivalent in spirit; correct function
+  phrase + matching name+city/state is the pass condition. Missing -> fail.
+
+  7.6.6 COUNTRY OF ORIGIN (imports only) - if application Item 3 is "imported",
+  extract and normalize the origin; compare if asserted. Note the precise
+  marking rules live in 19 CFR 102/134 (CBP), not TTB's own parts. Missing on
+  an import -> fail.
+
+  7.6.7 GOVERNMENT WARNING - EXACT + format (section 3):
+      (a) PRESENCE required (all beverages >= 0.5% ABV) -> fail if absent.
+      (b) WORDING: fuzzy edit-distance against the canonical string with a
+          tight threshold; tolerate ONLY OCR noise, never real deviation.
+          Any wording change (dropped/reordered token, case change of
+          "GOVERNMENT WARNING", missing "(2)") -> flag/fail.
+      (c) FORMAT: "GOVERNMENT WARNING:" must be all-caps (string check - do
+          reliably); bold, font size, and contrast reported as BEST-EFFORT
+          heuristic flags with a "human confirm" indicator. Title-case
+          "Government Warning" must be flagged (real rejection in workflow).
+
+  7.6.8 PRESENCE/FORMAT (all mandatory fields) - each required field must EXIST
+  and be legible/contrasting/English/minimum size/separate-and-apart per
+  section 2.5. Presence is a hard check; legibility, contrast, and type size
+  are best-effort heuristic flags.
+
+  7.6.9 VERIFICATION AS A CONJUNCTION OF PARALLEL BOOLEAN CRITERIA
+  Every per-field rule (7.6.1-7.6.8) is realized as one or more BOOLEAN
+  criteria. Each criterion is a pure function: given the OCR output and the
+  application data, it returns PASS (true) or FAIL (false), plus evidence
+  (extracted value, compared value, confidence, reason). No criterion holds
+  mutable state, so they are trivially parallelizable.
+
+  OVERALL VERDICT IS A PURE CONJUNCTION (AND):
+      label = Approved  <=>  EVERY criterion returns PASS
+      any single FAIL  =>  label is NOT Approved (Rejected for a hard/missing
+                           failure; Needs Correction for a near-threshold or
+                           low-confidence result - see 7.7).
+
+  All criteria are DETERMINISTIC FUZZY-STRING CHECKS (no model call):
+      Normalize both sides, then compare. "Fuzzy" here means mechanical
+      normalization, NOT model-based similarity: lower-case, collapse
+      whitespace, strip/normalize punctuation, map synonyms (function phrases),
+      parse to a canonical number with a tolerance. Used for:
+        - brand name (case/punct-tolerant),
+        - net contents (canonical volume),
+        - alcohol content (canonical ABV + tolerance + proof cross-check),
+        - name & address (normalized + function-phrase synonyms),
+        - country of origin (normalized),
+        - warning PRESENCE and WORDING (tight edit-distance vs the canonical
+          string; all-caps prefix check).
+      These are the cheap, fast, reproducible checks. There is no Bedrock LLM
+      criterion: class/type conformance, field disambiguation, and function-
+      phrase equivalence resolve deterministically (see 5.5 and 8.17).
+
+  PARALLELISM (the latency argument):
+      All criteria are INDEPENDENT given the OCR output, so they are evaluated
+      CONCURRENTLY after the single serial OCR step. Verification latency is
+      max(criterion latency), not the sum, which keeps the ~5s budget intact.
+
+7.7 OUTPUT / VERDICT SEMANTICS
+--------------------------------------------------------------------------------
+  Per field, report at minimum:
+      field name | extracted value | application/expected value | verdict
+      (Approved / Needs Correction / Rejected) | confidence | brief reason
+  Overall label verdict:
+      Approved         - ALL Boolean criteria pass (conjunction, 7.6.9): every
+                         required field present and matching; warning exact and
+                         correctly formatted (within limits).
+      Needs Correction - normalized compare is within tolerance of a boundary,
+                         OCR confidence is low, or a best-effort format
+                         heuristic (bold/size/contrast) is inconclusive -
+                         needs a human to confirm.
+      Rejected         - a required field is missing, or a deterministic exact
+                         check (warning wording/case) failed.
+  The agent must always see the extracted text side by side with the expected
+  value; never present a bare verdict without evidence.
+
+7.8 NON-FUNCTIONAL REQUIREMENTS
+--------------------------------------------------------------------------------
+  7.8.1 LATENCY: single-label interactive results in about 5 seconds (hard;
+  the prior 30-40s pilot was abandoned). Any slow optional step (vision LLM)
+  must not sit on the critical path.
+  7.8.2 BATCH: accept 200-300 labels at once; process asynchronously with job
+  status, per-label progress, and a summary (counts per verdict). Batch may be
+  nearline (seconds-to-a-minute) without violating UX.
+  7.8.3 USABILITY: clean and obvious; no hunting for buttons; large, plain
+  verdicts; assume the 73-year-old benchmark. Errors and near-misses explained
+  in plain language.
+  7.8.4 CORRECTNESS: deterministic verification for exact fields; no generative
+  model decides match/mismatch on the warning or on ABV numbers.
+  7.8.5 SECURITY (prototype): no sensitive-data retention; transient image
+  storage with deletion; TLS in transit. Formal PII/retention/FedRAMP review is
+  a documented production-phase gap, not a prototype feature.
+  7.8.6 ROBUSTNESS: handle imperfect images (angle/glare/lighting) by pre-
+  processing and, where extraction confidence is low, return "Needs Correction"
+  with the low-confidence region highlighted rather than silently failing.
+
+7.9 ACCEPTANCE CRITERIA (HOW TO KNOW IT WORKS)
+--------------------------------------------------------------------------------
+  - Given the sample distilled-spirits label (brand "OLD TOM DISTILLERY",
+    class/type "Kentucky Straight Bourbon Whiskey", "45% Alc./Vol. (90 Proof)",
+    "750 mL", standard warning), the system returns Approved when the
+    application matches and correctly flags each field when it does not.
+  - A case-only brand-name difference (STONE'S THROW vs Stone's Throw) is
+    reported as a MATCH (not a false failure).
+  - A title-case "Government Warning" (or any wording deviation) is flagged.
+  - "45% Alc./Vol." and "Alc 45% by vol" normalize to the same ABV and pass.
+  - "750 mL", "750ml", and "25.4 fl oz" normalize to the same net contents.
+  - Single-label result returns within ~5 seconds.
+  - A 250-label batch completes with per-label status and a summary, without
+    blocking the interactive path.
+  - A label missing any mandatory field returns Rejected naming the field.
+
+================================================================================
+8. UNCERTAINTIES, OPEN QUESTIONS, AND RISKS
+================================================================================
+Consolidated list of everything that could not be resolved from the assignment
+or the regulations, plus explicit risks. Each item states the question, why it
+matters, and a recommended default so work can proceed without re-litigating.
+
+--------------------------------------------------------------------------------
+8.1 BEVERAGE-TYPE SCOPE
+Q: Should the prototype cover all three beverage types or start with distilled
+spirits only?
+Why: The sample label and class/type example are distilled spirits. Wine and
+malt have materially different rules (wine: optional <=14% ABV, metric-only
+standards of fill; malt: optional ABV in most cases, U.S. customary net
+contents). All three multiply the field-mapping rules.
+ANSWER (USER): All three.
+
+--------------------------------------------------------------------------------
+8.2 EXACT VS FUZZY MATCHING BOUNDARIES
+Q: How tolerant should "normalized" comparisons be? At what point does a
+normalized difference become Needs Correction vs Rejected?
+Why: The regulation is silent on matching; agents apply judgment ("STONE'S
+THROW" is "obviously the same"). Over-strict = false failures; over-loose =
+missed violations.
+Default: normalized compare (case/whitespace/punctuation/unit normalization)
+for brand/name/address/class-type; tight fuzzy edit-distance for the warning;
+numeric-with-tolerance for ABV. Near a threshold or low OCR confidence ->
+Needs Correction (human confirm), not a hard Rejected. Documented judgment call.
+
+--------------------------------------------------------------------------------
+8.3 WARNING STATEMENT - PUNCTUATION AND LINE BREAKS
+Q: The CFR prints the two warning sentences with a line break; real labels may
+join or split them. Does the normalizer collapse newlines and whitespace?
+Why: Too aggressive masks real deviations; too strict false-fails line-wrapped
+labels.
+Default: normalize all whitespace (incl. newlines) to single spaces before fuzzy
+compare, but do NOT normalize punctuation or case (case of "GOVERNMENT WARNING:"
+is itself a requirement).
+
+--------------------------------------------------------------------------------
+8.4 FORMAT CHECKS (BOLD / TYPE SIZE / CONTRAST) RELIABILITY
+Q: Can bold, font size (mm), and contrast be detected reliably enough to be a
+deterministic verdict, or are they always heuristic?
+Why: These ARE regulatory requirements (16.22, 5.52-5.53, 4.38, 7.53), but
+pixel-based detection of bold weight and physical mm is unreliable without a
+scale reference.
+Default: treat caps (string-level) and presence as deterministic; treat
+bold/size/contrast as best-effort heuristic flags with a "human confirm"
+indicator. Do not claim these as hard checks in v1. Document the limitation.
+
+--------------------------------------------------------------------------------
+8.5 COUNTRY OF ORIGIN DEPTH
+Q: For imports, must the tool implement the substance of CBP's 19 CFR 102/134
+marking rules, or only compare the stated origin string?
+Why: The assignment lists "country of origin for imports" as a common element,
+but the substantive marking rules live OUTSIDE TTB's own CFR parts (TTB defers
+to CBP - 5.69, 4.35(e), 7.69).
+Default: v1 compares the extracted origin string to the application value
+(normalized). Full 102/134 substantive analysis is out of scope and noted.
+
+--------------------------------------------------------------------------------
+8.6 OCR/VISION MODEL CHOICE AND THE 5-SECOND BUDGET 
+Q: Which exact OCR engine and (optional) vision model? Is 5s met at the chosen
+image size?
+ANSWER (USER): AWS Textract DetectDocumentText (pure/raw text extraction) is the
+extractor. CLOSED: AnalyzeDocument (forms/tables), Google Document AI, Azure
+Document Intelligence, and self-hosted OCR. Vision-LLM reasoning is reserved
+for the Bedrock Boolean criteria (7.6.9), run in parallel.
+Why: The 5-second requirement is the hardest constraint and the prior pilot's
+cause of death; managed LLM vision can exceed 5s when serialized, so it must
+overlap the deterministic checks.
+Default: Textract DetectDocumentText on the critical path; Bedrock criteria in
+parallel; latency must be MEASURED, not assumed. PaddleOCR on GPU is the
+documented data-sovereignty fallback only.
+SUPERSEDED: the Bedrock criteria are dropped for the prototype - see 8.17 and
+5.5 (deterministic + Textract only).
+
+--------------------------------------------------------------------------------
+8.7 APPLICATION-DATA SCHEMA 
+Resolved: the form mirrors TTB Form 5100.31 (section 4.6); brand name (Item 6),
+product type (Item 5), source (Item 3), and applicant (Item 8) are the matching
+fields; ABV/net-contents/class-type/warning are label-derived.
+Remaining caveat: the take-home's "Sample Label" frames ABV/net-contents/
+class-type/warning as application fields, which the real form does not carry.
+Default: keep the faithful 5100.31 mirror; if "expected values" are wanted, use
+a clearly-marked `expected` extension block, never the `application` object.
+
+--------------------------------------------------------------------------------
+8.8 IMAGE SOURCES AND RIGHTS / TEST DATA
+Q: Where do test labels come from? The assignment suggests generating synthetic
+labels with AI image tools.
+Why: No real COLA artwork is provided; the prototype must be demonstrable on
+sample data.
+Default: generate a small set of synthetic distilled-spirits labels (including
+deliberate defects: title-case warning, wrong ABV, missing field, case-variant
+brand name) to exercise the verification rules. Real TTB label artwork is not
+available in this exercise.
+
+--------------------------------------------------------------------------------
+8.9 "FIELD OF VISION" AND PLACEMENT CHECKS
+Q: Should the tool enforce placement rules (brand/class/alcohol share one field
+of vision for distilled spirits; brand label vs back label)?
+Why: Real requirements (5.63(a), 4.32(a)), but "same field of vision" requires
+understanding physical container geometry, which a flat photo only approximates.
+Default: v1 checks presence and legibility, NOT field-of-vision geometry (defer
+to a note). Flagging placement requires multiple images per container. Document
+as a v1 limitation.
+
+--------------------------------------------------------------------------------
+8.10 PROOF VS ABV CROSS-CHECK EDGE CASES
+Q: When a label states both ABV and proof, is a mismatch always a failure, or
+can labels state proof loosely?
+Why: Proof = 2 x ABV by definition; 45% = 90 proof is exact, but unusual proofs
+(101 proof = 50.5% ABV) and rounding vary.
+Default: cross-check proof = 2 x ABV within the ABV tolerance and flag (Needs
+Correction), not reject, on inconsistency. The regulation treats proof as
+optional supplementary (5.65(b)(1)).
+
+--------------------------------------------------------------------------------
+8.11 ASPARTAME / INGREDIENT DISCLOSURES
+Q: Are the conditional disclosures (sulfites, FD&C Yellow No. 5, cochineal,
+aspartame, allergen declarations) in scope for v1?
+Why: Mandatory when the condition applies (5.63(c), 4.32(c-e), 7.63(b)), but
+the application data may not assert them, and "does this product contain X" is
+a formula question, not a label question.
+Default: v1 checks PRESENCE/format of these statements if the application
+asserts them, but does not independently determine whether the condition
+applies. Document as a scope boundary.
+
+--------------------------------------------------------------------------------
+8.12 FEDERAL COMPLIANCE GAP
+[These considerations out of scope for prototype; planning is forward-oriented.] 
+Q: What PII, retention, and FedRAMP obligations apply to a production
+deployment?
+Why: Real deployment differs sharply from the prototype; the 18-month FedRAMP
+certification is a warning.
+Default: prototype stores nothing sensitive and deletes transient images; record
+a production checklist (security review, retention schedule, FedRAMP) as future
+work. Not a v1 deliverable.
+
+--------------------------------------------------------------------------------
+8.13 DATE / VERSIONING OF REGULATIONS
+Q: Are the cited sections current?
+Why: Parts 5 and 7 were modernized (effective 2022); Part 4 remains legacy-
+numbered. The eCFR was fetched 2026-09; section numbers/content could shift
+with future rulemakings (the labeling-resources page notes ongoing "Labeling
+Modernization" review).
+Default: treat the fetched eCFR as authoritative for this exercise; add a version
+note and re-check against eCFR before any production use.
+
+--------------------------------------------------------------------------------
+8.14 ASSUMPTION: BACKEND LANGUAGE AND CLOUD
+Go backend + AWS. Azure migration-friction decreased by nature of shiftable
+cross-compilation-friendly monolith. Go is perfectly suited for such a case --
+furthermore, binaries written in the language tend performant, maintainable by
+virtue of simplicity, and (of course) memory-management is a non-issue.
+
+--------------------------------------------------------------------------------
+8.15 COLA INTEROPERABILITY LIMIT 
+Q: Is there a programmatic API or export from COLAs Online?
+Why: The public registry is read-only search and bot-protected (Akamai
+CAPTCHA); COLAs Online is a closed, registered, MFA'd web app. No public API
+is documented.
+Default: achieve interoperability via schema/contract parity (mirror 5100.31,
+match the file contract, reuse status vocabulary); do not assume a COLA API
+exists. The assignment also places direct COLA integration out of scope.
+
+--------------------------------------------------------------------------------
+8.16 PAPER-FORM-AS-IMAGE (EVALUATED AND SHELVED)
+Q: Should the "form" also be accepted as an image (a photo/scan of the paper
+5100.31)?
+Why: Paper filing exists, but even a perfect OCR of 5100.31 yields only brand
+name, product type, source, formula, varietal, appellation, and applicant info -
+NOT ABV/net-contents/class-type/warning, which are label-side only.
+Default: keep the form structured (JSON mirroring 5100.31); do not model the
+form as an image. Optional future convenience: OCR a 5100.31 photo to auto-
+populate brand/product-type/source/applicant, but never as the primary contract.
+
+--------------------------------------------------------------------------------
+8.17 BEDROCK LLM - NOT REQUIRED 
+Q: Does the prototype actually need the Bedrock LLM Boolean criteria proposed
+in 5.1.2 and 7.6.9, or does deterministic fuzzy-string + Textract suffice?
+Why: The verification engine shipped 100% deterministic (no bedrock-runtime
+dependency, no bedrock:InvokeModel IAM grant, no LLM call). The class-B
+criteria resolve deterministically (controlled vocabulary for class/type,
+position/qualifier heuristics for field mapping, regex synonyms for function
+phrases), and the 5s latency budget plus determinism/auditability argue
+against a generative criterion.
+Resolved: no Bedrock for the prototype - pure determinism + Textract. See 5.5
+for the full rationale. Defer a vision model only for future semantic
+field-disambiguation needs, behind the deterministic heuristics.
+================================================================================

@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bevcheck -- TTB label verification</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 760px; }
+    fieldset { border: 1px dashed #bbb; border-radius: 6px; padding: 1rem; margin-top: 1rem; }
+    legend { font-weight: 600; padding: 0 .5rem; }
+    .hint { color: #666; font-size: .9rem; margin: .25rem 0 .5rem; }
+    label { display: block; font-weight: 600; }
+    textarea { width: 100%; height: 11rem; font-family: monospace; box-sizing: border-box; }
+    button { margin-top: 1rem; }
+    .dragover { border-color: #2b6cb0; background: #ebf4ff; }
+    #previews { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .6rem; align-items: flex-start; }
+    #previews.empty { color: #666; font-size: .9rem; }
+    .preview { display: flex; flex-direction: column; align-items: center; width: 80px; }
+    .preview img { width: 80px; height: 80px; object-fit: contain; border: 1px solid #ddd; border-radius: 4px; background: #f7f7f7; }
+    .preview .name { font-size: .72rem; color: #555; margin-top: .25rem; text-align: center; word-break: break-all; width: 100%; }
+    .fieldgrid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem 1rem; margin-top: .5rem; }
+    .fieldgrid label { display: flex; flex-direction: column; font-weight: 600; font-size: .95rem; gap: .3rem; }
+    .fieldgrid input, .fieldgrid select { padding: .45rem .55rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; width: 100%; font-family: inherit; background: #fff; }
+    .fieldgrid .wide { grid-column: 1 / -1; }
+    #jsonBox { margin-top: .75rem; }
+    #jsonBox summary { cursor: pointer; color: #2b6cb0; font-weight: 600; }
+    #jsonBox textarea { height: 9rem; margin-top: .5rem; }
+    #status { margin-top: 1rem; color: #555; }
+    .badge { padding: .1rem .5rem; border-radius: 3px; font-size: .85rem; }
+    .pass { background: #d4edda; color: #155724; }
+    .fail { background: #f8d7da; color: #721c24; }
+    .needs_correction { background: #fff3cd; color: #856404; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    td, th { border: 1px solid #ccc; padding: .35rem .5rem; text-align: left; }
+    details { margin-top: 1rem; }
+    #result details summary { cursor: pointer; font-weight: 600; }
+    pre { white-space: pre-wrap; overflow-wrap: break-word; }
+  </style>
+</head>
+<body>
+  <h1>Bevcheck</h1>
+
+  <form id="form" autocomplete="off">
+    <fieldset id="imageField">
+      <legend>Label photo</legend>
+      <div class="hint">Pick a photo of label-artwork to verify. (JPEG or PNG.) You may browse for your image-file, or drag-and-drop it here. Ensure that relevant text is properly oriented.</div>
+      <input type="file" id="image" accept="image/png,image/jpeg,image/webp" multiple required>
+      <div id="previews" class="empty">no photo selected</div>
+    </fieldset>
+
+    <fieldset id="appField">
+      <legend>COLA application (TTB Form 5100.31)</legend>
+      <div class="hint">Fill in the fields below, in accordance with the Form 5100.31 under judgment.</div>
+    <div class="hint">(Advanced users may prefer to drag-and-drop JSON files generated from COLA here, instead. Expand the dropdown menu titled "edit JSON directly" for live access to such structured data.)</div>
+
+      <div class="fieldgrid">
+        <label>Product type
+          <select id="f_product_type">
+            <option value="">Select product type…</option>
+            <option value="wine">Wine</option>
+            <option value="distilled_spirits">Distilled spirits</option>
+            <option value="malt_beverages">Malt beverages</option>
+          </select>
+        </label>
+
+        <label>Source
+          <select id="f_source">
+            <option value="domestic">Domestic</option>
+            <option value="imported">Imported</option>
+          </select>
+        </label>
+
+        <label class="wide">Brand name
+          <input id="f_brand_name" placeholder="e.g. OLD TOM DISTILLERY">
+        </label>
+
+        <label class="wide">Applicant name
+          <input id="f_applicant_name" placeholder="e.g. Old Tom Distillery Co.">
+        </label>
+
+        <label class="wide">Applicant address
+          <input id="f_applicant_address" placeholder="e.g. Bardstown, KY">
+        </label>
+
+        <label class="wide">Class / type
+          <input id="f_class_type" placeholder="e.g. Kentucky Straight Bourbon Whiskey">
+        </label>
+
+        <label>Alcohol content
+          <input id="f_alcohol_content" placeholder="e.g. 45%">
+        </label>
+
+        <label>Net contents
+          <input id="f_net_contents" placeholder="e.g. 750 mL">
+        </label>
+
+        <label class="wide">Country of origin
+          <input id="f_country_of_origin" placeholder="e.g. Scotland (imported only)">
+        </label>
+      </div>
+
+      <details id="jsonBox">
+        <summary>Advanced -- edit JSON directly</summary>
+        <div class="hint">Paste or drop a full COLA-application-based JSON file here to fill the fields above, or edit the JSON's fields on-the-fly.</div>
+        <textarea id="application" spellcheck="false"></textarea>
+      </details>
+
+      <details id="batchBox">
+        <summary>Advanced -- batch processing (JSONL)</summary>
+        <div class="hint">One JSON object (starting from the above-established field-structure) per line -- except with one additional field whose key is named <code>image_url</code>, and whose value is a working URL pointing to the (JPEG/PNG) label-artwork image associated with the application specified by the other fields. Example:</div>
+        <pre class="example">{"product_type":"distilled_spirits","source":"domestic","brand_name":"OLD TOM DISTILLERY","applicant_name":"Old Tom Distillery Co.","applicant_address":"Bardstown, KY","class_type":"Kentucky Straight Bourbon Whiskey","alcohol_content":"45%","net_contents":"750 mL","image_url":"http://2501.win/label.png"}</pre>
+        <textarea id="batch" spellcheck="false" placeholder='Paste JSONL here -- one object per line'></textarea>
+        <button type="button" id="batchSubmit">Run batch</button>
+      </details>
+    </fieldset>
+
+    <button type="submit">Check label</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="result"></div>
+
+  <script>
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    // Turn snake_case machine values into display labels: "needs_correction" -> "Needs Correction",
+    // "ocr_confidence" -> "OCR Confidence", "country_of_origin" -> "Country of Origin".
+    const STOP_WORDS = new Set(['of', 'the', 'and', 'in', 'on', 'at', 'for', 'to', 'a', 'an']);
+    const ACRONYMS = new Set(['ocr', 'ttb', 'abv']);
+    const humanize = s => String(s).split('_').map((w, i) => {
+      const lower = w.toLowerCase();
+      if (ACRONYMS.has(lower)) return lower.toUpperCase();
+      if (i > 0 && STOP_WORDS.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    }).join(' ');
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('result');
+    const imageInput = document.getElementById('image');
+    const previews = document.getElementById('previews');
+    const appTextarea = document.getElementById('application');
+    const jsonBox = document.getElementById('jsonBox');
+    const batchTextarea = document.getElementById('batch');
+    let previewUrls = [];
+
+    // Flat COLA application fields, in JSON key order.
+    const FIELDS = [
+      { key: 'product_type', id: 'f_product_type' },
+      { key: 'source', id: 'f_source' },
+      { key: 'brand_name', id: 'f_brand_name' },
+      { key: 'applicant_name', id: 'f_applicant_name' },
+      { key: 'applicant_address', id: 'f_applicant_address' },
+      { key: 'class_type', id: 'f_class_type' },
+      { key: 'alcohol_content', id: 'f_alcohol_content' },
+      { key: 'net_contents', id: 'f_net_contents' },
+      { key: 'country_of_origin', id: 'f_country_of_origin' },
+    ];
+    const fieldEls = {};
+    for (const f of FIELDS) fieldEls[f.key] = document.getElementById(f.id);
+
+    // Render a client-side thumbnail for every selected image so the photo
+    // content can be matched to its filename before submitting.
+    function refreshPreviews() {
+      const files = Array.from(imageInput.files);
+      for (const u of previewUrls) URL.revokeObjectURL(u);
+      previewUrls = [];
+      if (files.length === 0) {
+        previews.className = 'empty';
+        previews.textContent = 'no photo selected';
+        return;
+      }
+      previews.className = '';
+      previews.textContent = '';
+      for (const f of files) {
+        const url = URL.createObjectURL(f);
+        previewUrls.push(url);
+        const wrap = document.createElement('div');
+        wrap.className = 'preview';
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = f.name;
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = f.name;
+        wrap.append(img, name);
+        previews.appendChild(wrap);
+      }
+    }
+
+    // Any change to the label or the COLA form invalidates the previous result,
+    // so a stale verdict is never misread as belonging to the new inputs.
+    function invalidate() {
+      resultEl.innerHTML = '';
+      statusEl.textContent = '';
+    }
+
+    // Build the flat application object from the form fields.
+    function fieldsToObject() {
+      const obj = {};
+      for (const f of FIELDS) obj[f.key] = fieldEls[f.key].value.trim();
+      return obj;
+    }
+
+    // Mirror the form into the JSON box. Programmatic .value writes do not fire
+    // input events, so there is no feedback loop with syncJSONToFields.
+    function syncFieldsToJSON() {
+      appTextarea.value = JSON.stringify(fieldsToObject(), null, 2);
+    }
+
+    // Fill the form fields from the JSON box (no-op while it holds invalid JSON).
+    function syncJSONToFields() {
+      let obj;
+      try { obj = JSON.parse(appTextarea.value || '{}'); } catch (err) { return; }
+      for (const f of FIELDS) {
+        const v = obj[f.key];
+        fieldEls[f.key].value = (v === undefined || v === null) ? '' : String(v);
+      }
+    }
+
+    imageInput.addEventListener('change', () => { refreshPreviews(); invalidate(); });
+    for (const f of FIELDS) {
+      fieldEls[f.key].addEventListener('input', () => { syncFieldsToJSON(); invalidate(); });
+      fieldEls[f.key].addEventListener('change', () => { syncFieldsToJSON(); invalidate(); });
+    }
+    appTextarea.addEventListener('input', () => { syncJSONToFields(); invalidate(); });
+    batchTextarea.addEventListener('input', invalidate);
+
+    // Reload and back/forward restore always start from a blank form.
+    function clearForm() {
+      imageInput.value = '';
+      for (const f of FIELDS) {
+        const el = fieldEls[f.key];
+        el.value = el.tagName === 'SELECT' ? el.options[0].value : '';
+      }
+      refreshPreviews();
+      syncFieldsToJSON();
+      invalidate();
+    }
+    window.addEventListener('pageshow', clearForm);
+    window.addEventListener('pagehide', clearForm);
+
+    // Drag-and-drop: images onto the photo field, a JSON file onto the COLA field.
+    function bindDrop(el, kind) {
+      ['dragenter', 'dragover'].forEach(ev => el.addEventListener(ev, e => {
+        e.preventDefault();
+        el.classList.add('dragover');
+      }));
+      ['dragleave', 'drop'].forEach(ev => el.addEventListener(ev, e => {
+        e.preventDefault();
+        el.classList.remove('dragover');
+      }));
+      el.addEventListener('drop', e => {
+        const files = Array.from(e.dataTransfer.files);
+        if (kind === 'image') {
+          const imgs = files.filter(f => /\.(png|jpe?g|webp)$/i.test(f.name));
+          if (!imgs.length) return;
+          const dt = new DataTransfer();
+          imgs.forEach(f => dt.items.add(f));
+          imageInput.files = dt.files;
+          refreshPreviews();
+          invalidate();
+        } else {
+          const jsons = files.filter(f => /\.json$/i.test(f.name));
+          if (!jsons.length) return;
+          invalidate();
+          jsons[0].text().then(text => {
+            appTextarea.value = text;
+            syncJSONToFields();
+            jsonBox.open = true; // reveal the filled JSON box
+          });
+        }
+      });
+    }
+    bindDrop(document.getElementById('imageField'), 'image');
+    bindDrop(document.getElementById('appField'), 'json');
+
+    document.getElementById('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      resultEl.innerHTML = '';
+
+      const files = imageInput.files;
+      if (files.length === 0) { statusEl.textContent = 'choose a label photo'; return; }
+      if (files.length > 1) { statusEl.textContent = 'batch uploads are coming soon -- pick one label photo for now'; return; }
+
+      const obj = fieldsToObject();
+      if (!obj.product_type) { statusEl.textContent = 'choose a product type'; return; }
+
+      const fd = new FormData();
+      fd.append('image', files[0]);
+      fd.append('application', JSON.stringify(obj));
+
+      statusEl.textContent = 'submitting…';
+      let resp;
+      try { resp = await fetch('/v1/verify', { method: 'POST', body: fd }); }
+      catch (err) { statusEl.textContent = 'error: ' + err; return; }
+      if (!resp.ok) { statusEl.textContent = 'error: HTTP ' + resp.status; return; }
+      const { job_id } = await resp.json();
+      poll(job_id);
+    });
+
+    document.getElementById('batchSubmit').addEventListener('click', async () => {
+      const text = batchTextarea.value.trim();
+      if (!text) { statusEl.textContent = 'paste some JSONL to run a batch'; return; }
+      resultEl.innerHTML = '';
+      statusEl.textContent = 'submitting batch…';
+      let resp;
+      try {
+        resp = await fetch('/v1/batch', { method: 'POST', headers: { 'Content-Type': 'application/x-ndjson' }, body: text });
+      } catch (err) { statusEl.textContent = 'error: ' + err; return; }
+      if (!resp.ok) {
+        let msg = 'error: HTTP ' + resp.status;
+        try { const b = await resp.json(); if (b.error) msg += ' -- ' + b.error; } catch (_) {}
+        statusEl.textContent = msg;
+        return;
+      }
+      const { job_id } = await resp.json();
+      poll(job_id);
+    });
+
+    async function poll(id) {
+      for (;;) {
+        const r = await fetch('/v1/jobs/' + id);
+        const j = await r.json();
+        if (j.status === 'done') {
+          statusEl.textContent = 'done';
+          render(j);
+          return;
+        }
+        statusEl.textContent = 'processing…';
+        await new Promise(res => setTimeout(res, 500));
+      }
+    }
+
+    function render(j) {
+      const items = j.items || [];
+      if (items.length === 0) { resultEl.innerHTML = '<p>no results</p>'; return; }
+      if (items.length === 1) { renderItem(items[0]); return; }
+
+      let html = '<h2>batch</h2>';
+      items.forEach((it, i) => {
+        const verdict = it.overall || it.error || it.status;
+        const reason = itemReason(it);
+        html += '<details><summary>#' + (i + 1) + ' -- ' + esc(verdict) +
+          (reason ? ' -- ' + esc(reason) : '') + '</summary>' + criteriaTable(it) + '</details>';
+      });
+      resultEl.innerHTML = html;
+    }
+
+    // itemReason returns a one-line "why" for a non-pass item (the first
+    // non-passing criterion), or '' for a clean pass.
+    function itemReason(it) {
+      if (it.error) return it.error;
+      for (const c of it.criteria || []) {
+        if (c.status !== 'pass') return c.reason;
+      }
+      return '';
+    }
+
+    function renderItem(it) {
+      if (it.error) { resultEl.innerHTML = '<p>error: ' + esc(it.error) + '</p>'; return; }
+      resultEl.innerHTML = '<h2>' + esc(it.overall) + '</h2>' + criteriaTable(it);
+    }
+
+    function criteriaTable(it) {
+      if (it.error) return '<p>error: ' + esc(it.error) + '</p>';
+      let html = '<table><tr><th>criterion</th><th>status</th><th>reason</th></tr>';
+      for (const c of it.criteria || []) {
+        html += '<tr><td>' + esc(humanize(c.criterion)) + '</td>' +
+          '<td><span class="badge ' + esc(c.status) + '">' + esc(humanize(c.status)) + '</span></td>' +
+          '<td>' + esc(c.reason) + '</td></tr>';
+      }
+      html += '</table>';
+      if (it.ocr_text) html += '<details><summary>OCR text</summary><pre>' + esc(it.ocr_text) + '</pre></details>';
+      return html;
+    }
+  </script>
+</body>
+</html>
